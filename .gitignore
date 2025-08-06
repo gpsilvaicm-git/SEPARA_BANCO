@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+Lib/site-packages
+Scripts/
+build/
+dist/
+pyvenv.cfg
+*.txt
+/data/
+/SIAPPES/
+/SIPPES/
