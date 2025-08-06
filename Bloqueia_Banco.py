@@ -3,58 +3,67 @@ import os
 
 def processar_arquivo_banco():
     """
-    Lê múltiplos arquivos de banco, extrai nome e CPF, e consolida em um arquivo intermediário.
+    Lê múltiplos arquivos de banco de diretórios especificados, 
+    extrai nome e CPF, e consolida em um arquivo intermediário.
     """
-    arquivos_banco = [
-        'bco001_febra.txt',
-        'bco001_febra_pec.txt',
-        'febraban_bco001_ev.txt',
-        'febraban_pj_001.txt'
-    ]
-    diretorio_base = 'SIAPPES/JUNHO'
+    diretorios_base = ['SIAPPES/JUNHO', 'SIPPES/JUNHO']
     
     registros_por_arquivo = {}
     total_registros_consolidados = 0
 
     try:
         with open('preparo_lista_banco.txt', 'w', encoding='utf-8') as arq_preparo:
-            for nome_arquivo in arquivos_banco:
-                caminho_arquivo = os.path.join(diretorio_base, nome_arquivo)
-                registros_neste_arquivo = 0
-                
-                try:
-                    with open(caminho_arquivo, 'r', encoding='latin-1') as arq_banco:
-                        banco_linhas = arq_banco.readlines()
-                        # Alguns arquivos podem ser pequenos e não ter cabeçalho/rodapé
-                        if len(banco_linhas) > 4:
-                            linhas_relevantes = banco_linhas[2:-2]
-                        else:
-                            linhas_relevantes = banco_linhas
+            for diretorio in diretorios_base:
+                if not os.path.isdir(diretorio):
+                    print(f"Aviso: Diretório '{diretorio}' não encontrado. Pulando...")
+                    continue
 
-                        for i in range(0, len(linhas_relevantes), 2):
-                            if i + 1 < len(linhas_relevantes):
-                                linha_banco_a = linhas_relevantes[i]
-                                linha_banco_b = linhas_relevantes[i+1]
-
-                                nome_banco = linha_banco_a[43:73].strip()
-                                cpf_banco = linha_banco_b[21:33].strip()
-
-                                nome_banco_formatado = nome_banco.ljust(30)
-                                if nome_banco and cpf_banco:
-                                    arq_preparo.write(f"{nome_banco_formatado},{cpf_banco}\n")
-                                    registros_neste_arquivo += 1
+                for nome_arquivo in os.listdir(diretorio):
+                    caminho_arquivo = os.path.join(diretorio, nome_arquivo)
                     
-                    registros_por_arquivo[nome_arquivo] = registros_neste_arquivo
-                    total_registros_consolidados += registros_neste_arquivo
+                    # Pular subdiretórios, se houver
+                    if not os.path.isfile(caminho_arquivo):
+                        continue
 
-                except FileNotFoundError:
-                    print(f"Aviso: O arquivo '{caminho_arquivo}' não foi encontrado e será ignorado.")
-                    registros_por_arquivo[nome_arquivo] = "Não encontrado"
-                except Exception as e:
-                    print(f"Erro ao processar o arquivo '{caminho_arquivo}': {e}")
-                    registros_por_arquivo[nome_arquivo] = f"Erro ({e})"
+                    registros_neste_arquivo = 0
+                    try:
+                        with open(caminho_arquivo, 'r', encoding='latin-1') as arq_banco:
+                            banco_linhas = arq_banco.readlines()
+                            
+                            if len(banco_linhas) > 4:
+                                linhas_relevantes = banco_linhas[2:-2]
+                            else:
+                                linhas_relevantes = banco_linhas
 
-        print("--- Relatório de Processamento dos Bancos ---")
+                            for i in range(0, len(linhas_relevantes), 2):
+                                if i + 1 < len(linhas_relevantes):
+                                    linha_banco_a = linhas_relevantes[i]
+                                    linha_banco_b = linhas_relevantes[i+1]
+
+                                    # Validação mínima do comprimento da linha para evitar IndexError
+                                    if len(linha_banco_a) > 73 and len(linha_banco_b) > 33:
+                                        nome_banco = linha_banco_a[43:73].strip()
+                                        cpf_banco = linha_banco_b[21:33].strip()
+
+                                        nome_banco_formatado = nome_banco.ljust(30)
+                                        if nome_banco and cpf_banco:
+                                            arq_preparo.write(f"{nome_banco_formatado},{cpf_banco}\n")
+                                            registros_neste_arquivo += 1
+                        
+                        chave_relatorio = os.path.join(os.path.basename(diretorio), nome_arquivo)
+                        registros_por_arquivo[chave_relatorio] = registros_neste_arquivo
+                        total_registros_consolidados += registros_neste_arquivo
+
+                    except (IOError, UnicodeDecodeError) as e:
+                        chave_relatorio = os.path.join(os.path.basename(diretorio), nome_arquivo)
+                        print(f"Aviso: Não foi possível processar o arquivo '{caminho_arquivo}'. Pode não ser um arquivo de texto ou ter uma codificação inesperada. Erro: {e}")
+                        registros_por_arquivo[chave_relatorio] = f"Erro de leitura"
+                    except Exception as e:
+                        chave_relatorio = os.path.join(os.path.basename(diretorio), nome_arquivo)
+                        print(f"Erro inesperado ao processar o arquivo '{caminho_arquivo}': {e}")
+                        registros_por_arquivo[chave_relatorio] = f"Erro ({e})"
+
+        print("\n--- Relatório de Processamento dos Bancos ---")
         for nome, contagem in registros_por_arquivo.items():
             print(f"Arquivo '{nome}': {contagem} registros processados.")
         print("-----------------------------------------------")
