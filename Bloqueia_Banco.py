@@ -12,8 +12,8 @@ import pandas as pd
 CONFIGURACAO_COLUNAS = {
     "RM": "N", "SUBORDINACAO": "N", "TIPO": "N", "CMDO_MIL_AREA": "N",
     "CODOM": "N", "SIGLA_OM": "N", "CAT": "N", "PG_PGTO": "N",
-    "DESCRICAO_PG": "N", "PREC_CP": "N", "CPF": "S", "BANCO": "S",
-    "BANCO_ATUAL": "S", "IDENTIDADE": "N", "NOME": "S", "CALCULO": "N",
+    "DESCRICAO_PG": "N", "PREC_CP": "S", "CPF": "S", "BANCO": "S",
+    "BANCO_ATUAL": "S", "IDENTIDADE": "N", "NOME": "S", "CALCULO": "S",
     "SITUACAO_COD": "N", "IND": "N", "ALTERACAO_CAD": "N", "DT_LIMITE": "N",
     "CLASS_PENSAO": "N", "TIPO_PENSAO": "N", "VALOR_BRUTO": "N",
     "VALOR_DESCONTOS": "N", "VALOR_LIQUIDO": "N", "DUPLICADO": "N",
@@ -216,15 +216,19 @@ def analisar_folha_vs_banco():
 
 def comparar_listas():
     print(f"\n{'='*50}\nANÁLISE BIDIRECIONAL COMPLETA\n{'='*50}")
+    
     banco_na_folha, banco_nao_na_folha = analisar_banco_vs_folha()
     folha_no_banco, folha_nao_no_banco = analisar_folha_vs_banco()
+    
     print(f"\n{'='*50}\nRESUMO FINAL\n{'='*50}")
     print(f"Intersecção (CPFs em ambos): {banco_na_folha} CPFs")
     print(f"Só no banco (não na folha): {banco_nao_na_folha} CPFs")
     print(f"Só na folha (não no banco): {folha_nao_no_banco} CPFs")
     print(f"\nArquivos gerados:")
-    print("  - BANCO_ENCONTRADOS_NA_FOLHA.txt\n  - BANCO_NAO_ENCONTRADOS_NA_FOLHA.txt")
-    print("  - FOLHA_ENCONTRADOS_NO_BANCO.txt\n  - FOLHA_NAO_ENCONTRADOS_NO_BANCO.txt")
+    print("  - BANCO_ENCONTRADOS_NA_FOLHA.txt")
+    print("  - BANCO_NAO_ENCONTRADOS_NA_FOLHA.txt")
+    print("  - FOLHA_ENCONTRADOS_NO_BANCO.txt")
+    print("  - FOLHA_NAO_ENCONTRADOS_NO_BANCO.txt")
 
 if __name__ == "__main__":
     if processar_arquivo_banco():
