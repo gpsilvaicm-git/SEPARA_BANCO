@@ -118,7 +118,7 @@ def processar_arquivo_banco():
                     for i in range(0, len(linhas_relevantes), 2):
                         if i + 1 < len(linhas_relevantes):
                             linha_banco_a = linhas_relevantes[i]
-                            linha_banco_b = linhas_relevantes[i+1]
+                            linha_banco_b = linhas_relevantes[i + 1]
                             if len(linha_banco_a) > 73 and len(linha_banco_b) > 33:
                                 nome_banco = linha_banco_a[43:73].strip()
                                 cpf_banco = linha_banco_b[21:33].strip()
@@ -151,8 +151,18 @@ def processar_arquivo_banco():
 def analisar_banco_vs_folha():
     try:
         with open('preparo_excel_bco.txt', 'r', encoding='utf-8') as arq_folha:
-            next(arq_folha)
-            cpfs_folha = {linha.split(';')[0].strip() for linha in arq_folha if linha.strip()}
+            header = next(arq_folha).strip()
+            colunas = [c.strip() for c in header.split(';')]
+            try:
+                idx_cpf = colunas.index('CPF')
+            except ValueError:
+                print("Erro: Coluna 'CPF' não encontrada em 'preparo_excel_bco.txt'.")
+                return 0, 0
+            cpfs_folha = {
+                linha.split(';')[idx_cpf].strip()
+                for linha in arq_folha
+                if linha.strip() and len(linha.split(';')) > idx_cpf
+            }
         banco_encontrados_na_folha, banco_nao_encontrados_na_folha = [], []
         with open('preparo_lista_banco.txt', 'r', encoding='utf-8') as arq_banco:
             for linha in arq_banco:
@@ -187,18 +197,25 @@ def analisar_folha_vs_banco():
             cpfs_banco = {linha.split(';')[1].strip() for linha in arq_banco if linha.strip()}
         folha_encontrados_no_banco, folha_nao_encontrados_no_banco = [], []
         with open('preparo_excel_bco.txt', 'r', encoding='utf-8') as arq_folha:
-            next(arq_folha)
+            header = next(arq_folha).strip()
+            colunas = [c.strip() for c in header.split(';')]
+            try:
+                idx_cpf = colunas.index('CPF')
+            except ValueError:
+                print("Erro: Coluna 'CPF' não encontrada em 'preparo_excel_bco.txt'.")
+                return 0, 0
             for linha in arq_folha:
                 linha = linha.strip()
                 if linha:
-                    try:
-                        cpf_folha = linha.split(';')[0].strip()
-                        if cpf_folha in cpfs_banco:
-                            folha_encontrados_no_banco.append(linha)
-                        else:
-                            folha_nao_encontrados_no_banco.append(linha)
-                    except IndexError:
+                    partes = linha.split(';')
+                    if len(partes) <= idx_cpf:
                         print(f"Aviso: Linha mal formada em 'preparo_excel_bco.txt' ignorada: {linha}")
+                        continue
+                    cpf_folha = partes[idx_cpf].strip()
+                    if cpf_folha in cpfs_banco:
+                        folha_encontrados_no_banco.append(linha)
+                    else:
+                        folha_nao_encontrados_no_banco.append(linha)
         with open('FOLHA_ENCONTRADOS_NO_BANCO.txt', 'w', encoding='utf-8') as arq:
             arq.write('\n'.join(folha_encontrados_no_banco))
         with open('FOLHA_NAO_ENCONTRADOS_NO_BANCO.txt', 'w', encoding='utf-8') as arq:
