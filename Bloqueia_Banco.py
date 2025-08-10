@@ -35,6 +35,34 @@ CONFIGURACAO_FILTROS = [
     ("PG_PGTO", "!=", "28"),
 ]
 
+"""Análise de cada linha:
+("BANCO_ATUAL", "==", "001")
+Coluna: BANCO_ATUAL
+Operador: == (igual a)
+Valor: "001" (o valor que estamos procurando)
+("CAT", "==", "PENSIONISTA")
+Coluna: CAT
+Operador: == (igual a)
+Valor: "PENSIONISTA"
+("PG_PGTO", "in", ["CEL", "TC", "MAJ"])
+Coluna: PG_PGTO
+Operador: in (está contido em...)
+Valor: ["CEL", "TC", "MAJ"] (uma lista de valores aceitáveis)
+
+
+Outros Operadores Úteis que Você Pode Usar
+Operador	O que faz	Exemplo de Uso
+==	Exatamente igual a	("SITUACAO_COD", "==", "ATIVO")
+!=	Diferente de	("BANCO", "!=", "104")
+in	Está em uma lista de valores	("CAT", "in", ["CIVIL", "MILITAR"])
+not in	Não está em uma lista de valores	("SISTEMA", "not in", ["TESTE", "LEGADO"])
+>	Maior que (para números)	("VALOR_LIQUIDO", ">", 5000)
+<	Menor que (para números)	("ANO", "<", 2023)
+str.contains	Contém um pedaço de texto	("NOME", "str.contains", "SILVA")
+Basta editar a lista CONFIGURACAO_FILTROS no topo do script com as regras que você precisar antes de executar.
+"""
+
+
 # =================================================================================
 # FIM DA ÁREA DE CONFIGURAÇÃO
 # =================================================================================
@@ -263,19 +291,25 @@ def main():
             for key, value in stats_banco.items():
                 totais_gerais[key] += value
 
-    log_print(f"\n{'='*60}\nRELATÓRIO FINAL CONSOLIDADO (TODOS OS BANCOS)\n{'='*60}")
     banco_nao_encontrados_total = totais_gerais['banco_total'] - totais_gerais['banco_encontrados']
     folha_nao_encontrados_total = totais_gerais['folha_total'] - totais_gerais['folha_encontrados']
     
-    log_print(f"Total de CPFs de TODOS os bancos processados: {totais_gerais['banco_total']}")
-    log_print(f"  - Total ENCONTRADOS na folha: {totais_gerais['banco_encontrados']}")
-    log_print(f"  - Total NÃO ENCONTRADOS na folha: {banco_nao_encontrados_total}")
-    
-    log_print(f"\nTotal de CPFs da FOLHA (todos os bancos): {totais_gerais['folha_total']}")
-    log_print(f"  - Total ENCONTRADOS nos arquivos de banco: {totais_gerais['folha_encontrados']}")
-    log_print(f"  - Total NÃO ENCONTRADOS nos arquivos de banco: {folha_nao_encontrados_total}")
-    log_print("\nProcesso concluído.")
+    # Monta o relatório final como uma string
+    relatorio_final_str = f"""
+{'='*60}
+RELATÓRIO FINAL CONSOLIDADO (TODOS OS BANCOS)
+{'='*60}
+Total de CPFs de TODOS os bancos processados: {totais_gerais['banco_total']}
+  - Total ENCONTRADOS na folha: {totais_gerais['banco_encontrados']}
+  - Total NÃO ENCONTRADOS na folha: {banco_nao_encontrados_total}
+Total de CPFs da FOLHA (todos os bancos): {totais_gerais['folha_total']}
+  - Total ENCONTRADOS nos arquivos de banco: {totais_gerais['folha_encontrados']}
+  - Total NÃO ENCONTRADOS nos arquivos de banco: {folha_nao_encontrados_total}
+Processo concluído."""
 
+    print(relatorio_final_str)  # Imprime no console
+    log_buffer.append(relatorio_final_str) # Adiciona ao buffer para o arquivo
+    
     # Grava o log no arquivo
     with open("RELATÓRIO_GERAL.txt", "w", encoding='utf-8') as f:
         f.write("\n".join(log_buffer))
