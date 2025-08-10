@@ -70,49 +70,41 @@ Basta editar a lista CONFIGURACAO_FILTROS no topo do script com as regras que vo
 def passo1_identificar_e_processar_bancos():
     log_print(f"\n{'='*50}\nPASSO 1: PROCESSANDO ARQUIVOS DE BANCO\n{'='*50}")
     diretorios_base = ['SIAPPES', 'SIPPES']
-    dados_por_banco = defaultdict(lambda: {'registros': {}, 'total_lido': 0, 'duplicatas': {}})
+    dados_por_banco = defaultdict(lambda: {'registros': {}, 'total_lido': 0})
     bancos_encontrados = set()
 
     for diretorio in diretorios_base:
         if not os.path.isdir(diretorio):
             log_print(f"Aviso: Diretório '{diretorio}' não encontrado. Pulando.")
             continue
-        
-        # os.walk para percorrer subdiretórios
-        for root, _, files in os.walk(diretorio):
-            for nome_arquivo in files:
-                caminho_arquivo = os.path.join(root, nome_arquivo)
+        for nome_arquivo in os.listdir(diretorio):
+            caminho_arquivo = os.path.join(diretorio, nome_arquivo)
+            if not os.path.isfile(caminho_arquivo):
+                continue
+            
+            try:
+                with open(caminho_arquivo, 'r', encoding='utf-8', errors='ignore') as arq_banco:
+                    banco_linhas = arq_banco.readlines()
                 
-                try:
-                    with open(caminho_arquivo, 'r', encoding='utf-8', errors='ignore') as arq_banco:
-                        banco_linhas = arq_banco.readlines()
-                    
-                    linhas_relevantes = banco_linhas[2:-2] if len(banco_linhas) > 4 else banco_linhas
+                linhas_relevantes = banco_linhas[2:-2] if len(banco_linhas) > 4 else banco_linhas
 
-                    for i in range(0, len(linhas_relevantes), 2):
-                        if i + 1 < len(linhas_relevantes):
-                            linha_banco_a = linhas_relevantes[i]
-                            linha_banco_b = linhas_relevantes[i+1]
+                for i in range(0, len(linhas_relevantes), 2):
+                    if i + 1 < len(linhas_relevantes):
+                        linha_banco_a = linhas_relevantes[i]
+                        linha_banco_b = linhas_relevantes[i+1]
 
-                            if len(linha_banco_a) > 73 and len(linha_banco_b) > 33:
-                                banco_id = linha_banco_a[:3]
-                                nome_banco = linha_banco_a[43:73].strip()
-                                cpf_banco = linha_banco_b[21:33].strip()
-                                
-                                if nome_banco and cpf_banco and banco_id.isdigit():
-                                    bancos_encontrados.add(banco_id)
-                                    dados_por_banco[banco_id]['total_lido'] += 1
-                                    
-                                    # Lógica para detectar e armazenar duplicatas
-                                    if cpf_banco in dados_por_banco[banco_id]['registros']:
-                                        # CPF já existe, é uma duplicata. Adiciona ao dicionário de duplicatas.
-                                        # O dicionário garante a unicidade pelo CPF.
-                                        # Armazena o nome do registro original que está em 'registros'.
-                                        dados_por_banco[banco_id]['duplicatas'][cpf_banco] = dados_por_banco[banco_id]['registros'][cpf_banco]
-                                    else:
-                                        dados_por_banco[banco_id]['registros'][cpf_banco] = nome_banco
-                except Exception as e:
-                    log_print(f"Erro ao processar '{caminho_arquivo}': {e}")
+                        if len(linha_banco_a) > 73 and len(linha_banco_b) > 33:
+                            banco_id = linha_banco_a[:3]
+                            nome_banco = linha_banco_a[43:73].strip()
+                            cpf_banco = linha_banco_b[21:33].strip()
+                            
+                            if nome_banco and cpf_banco and banco_id.isdigit():
+                                bancos_encontrados.add(banco_id)
+                                dados_por_banco[banco_id]['total_lido'] += 1
+                                if cpf_banco not in dados_por_banco[banco_id]['registros']:
+                                    dados_por_banco[banco_id]['registros'][cpf_banco] = nome_banco
+            except Exception as e:
+                log_print(f"Erro ao processar '{caminho_arquivo}': {e}")
     
     if not bancos_encontrados:
         log_print("Nenhum banco encontrado nos arquivos. Verifique os diretórios e arquivos.")
@@ -128,27 +120,12 @@ def passo1_identificar_e_processar_bancos():
         
         total_unicos = len(dados['registros'])
         total_lido = dados['total_lido']
-        
-        # Corrigido: a contagem de duplicatas eliminadas é a diferença entre o total lido e os registros únicos
-        duplicatas_eliminadas = total_lido - total_unicos
-
+        duplicatas = total_lido - total_unicos
         log_print(f"Banco {banco_id}:")
         log_print(f"  - Registros lidos: {total_lido}")
         log_print(f"  - Registros únicos: {total_unicos}")
-        log_print(f"  - Duplicatas eliminadas: {duplicatas_eliminadas}")
-        log_print(f"  - Arquivo de únicos gerado: {nome_arquivo_saida}")
-
-        # Gera o arquivo de duplicatas se houver alguma
-        if dados['duplicatas']:
-            nome_arquivo_duplicatas = f'DUPLICADOS_BANCO_{banco_id}.txt'
-            # Ordena as duplicatas por CPF para agrupar as ocorrências
-            duplicatas_ordenadas = sorted(dados['duplicatas'].items())
-            with open(nome_arquivo_duplicatas, 'w', encoding='utf-8') as arq_duplicatas:
-                arq_duplicatas.write("NOME;CPF\n")
-                for cpf, nome in duplicatas_ordenadas:
-                    arq_duplicatas.write(f"{nome};{cpf}\n")
-            log_print(f"  - Arquivo de duplicatas gerado: {nome_arquivo_duplicatas} ({len(duplicatas_ordenadas)} CPFs duplicados)")
-
+        log_print(f"  - Duplicatas eliminadas: {duplicatas}")
+        log_print(f"  - Arquivo gerado: {nome_arquivo_saida}")
 
     return sorted(list(bancos_encontrados))
 

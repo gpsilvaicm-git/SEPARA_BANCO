@@ -15,7 +15,7 @@ A ferramenta gera relatórios detalhados que auxiliam na análise e regularizaç
 O script opera em três passos principais, executados sequencialmente:
 
 ### Passo 1: Processamento dos Arquivos de Banco
-- O script varre os diretórios pré-configurados (`SIAPPES/JUNHO` e `SIPPES/JUNHO`).
+- O script varre os diretórios pré-configurados (`SIAPPES` e `SIPPES`).
 - Ele lê todos os arquivos de texto (`.txt`) contidos nesses diretórios.
 - Para cada arquivo, ele extrai o código do banco, o CPF e o nome do beneficiário.
 - Ele consolida os dados, removendo CPFs duplicados para cada banco.
