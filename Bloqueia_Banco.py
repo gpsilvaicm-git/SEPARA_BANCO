@@ -145,7 +145,7 @@ def passo2_preparar_excel_por_banco(df_original, banco_id):
     return True
 
 def passo3_analisar_cruzamento(banco_id):
-    log_print(f"\n--- Análise de Cruzamento - Banco {banco_id} ---")
+    
 
     arquivo_banco = f'preparo_lista_banco_{banco_id}.txt'
     arquivo_folha = f'preparo_excel_bco_{banco_id}.txt'
@@ -209,10 +209,13 @@ def passo3_analisar_cruzamento(banco_id):
         "folha_encontrados": len(folha_encontrados_list),
     }
     
+    log_print(f"\n--- Análise de Cruzamento - Banco {banco_id} ---")
     log_print(f"  - Total de CPFs no arquivo do Banco: {stats['banco_total']}")
-    log_print(f"  - Total de CPFs no arquivo da Folha: {stats['folha_total']}")
     log_print(f"  - CPFs do Banco ENCONTRADOS na Folha: {stats['banco_encontrados']}")
+    log_print(f"  - CPFs no Banco que não foram encontrados na Folha: {stats['banco_total'] - stats['banco_encontrados']}")
+    log_print(f"  - Total de CPFs no arquivo da Folha: {stats['folha_total']}")
     log_print(f"  - CPFs da Folha ENCONTRADOS no Banco: {stats['folha_encontrados']}")
+    log_print(f"  - CPFs da Folha que não foram encontrados no Banco: {stats['folha_total'] - stats['folha_encontrados']}")
     log_print(f"  - Arquivos de resultado gerados com sufixo '_{banco_id}.txt'")
 
     return stats
