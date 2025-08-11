@@ -28,7 +28,7 @@ CONFIGURACAO_COLUNAS = {
     "SITUACAO_COD": "N", "IND": "N", "ALTERACAO_CAD": "N", "DT_LIMITE": "N",
     "CLASS_PENSAO": "N", "TIPO_PENSAO": "N", "VALOR_BRUTO": "N",
     "VALOR_DESCONTOS": "N", "VALOR_LIQUIDO": "N", "DUPLICADO": "N",
-    "DESCRICAO_DUP": "N", "SISTEMA": "N", "CORRIDA": "N", "MES": "N", "ANO": "N"
+    "DESCRICAO_DUP": "N", "SISTEMA": "S", "CORRIDA": "N", "MES": "N", "ANO": "N"
 }
 
 CONFIGURACAO_FILTROS = [
@@ -70,7 +70,12 @@ Basta editar a lista CONFIGURACAO_FILTROS no topo do script com as regras que vo
 def passo1_identificar_e_processar_bancos():
     log_print(f"\n{'='*50}\nPASSO 1: PROCESSANDO ARQUIVOS DE BANCO\n{'='*50}")
     diretorios_base = ['SIAPPES', 'SIPPES']
-    dados_por_banco = defaultdict(lambda: {'registros': {}, 'total_lido': 0, 'duplicatas': {}})
+    dados_por_banco = defaultdict(lambda: {
+        'registros': {}, 
+        'duplicatas': {}, 
+        'duplicatas_intersistemas': {},
+        'arquivos_info': defaultdict(int)
+    })
     bancos_encontrados = set()
 
     for diretorio in diretorios_base:
@@ -78,6 +83,8 @@ def passo1_identificar_e_processar_bancos():
             log_print(f"Aviso: Diretório '{diretorio}' não encontrado. Pulando.")
             continue
         
+        sistema_atual = os.path.basename(diretorio)
+
         # os.walk para percorrer subdiretórios
         for root, _, files in os.walk(diretorio):
             for nome_arquivo in files:
@@ -101,16 +108,20 @@ def passo1_identificar_e_processar_bancos():
                                 
                                 if nome_banco and cpf_banco and banco_id.isdigit():
                                     bancos_encontrados.add(banco_id)
-                                    dados_por_banco[banco_id]['total_lido'] += 1
+                                    dados_por_banco[banco_id]['arquivos_info'][caminho_arquivo] += 1
                                     
-                                    # Lógica para detectar e armazenar duplicatas
-                                    if cpf_banco in dados_por_banco[banco_id]['registros']:
-                                        # CPF já existe, é uma duplicata. Adiciona ao dicionário de duplicatas.
-                                        # O dicionário garante a unicidade pelo CPF.
-                                        # Armazena o nome do registro original que está em 'registros'.
-                                        dados_por_banco[banco_id]['duplicatas'][cpf_banco] = dados_por_banco[banco_id]['registros'][cpf_banco]
+                                    registro_existente = dados_por_banco[banco_id]['registros'].get(cpf_banco)
+
+                                    if registro_existente:
+                                        # É uma duplicata. Adiciona à lista geral de duplicados.
+                                        dados_por_banco[banco_id]['duplicatas'][cpf_banco] = registro_existente['nome']
+                                        
+                                        # Verifica se é uma duplicata inter-sistemas.
+                                        if registro_existente['sistema'] != sistema_atual:
+                                            dados_por_banco[banco_id]['duplicatas_intersistemas'][cpf_banco] = registro_existente['nome']
                                     else:
-                                        dados_por_banco[banco_id]['registros'][cpf_banco] = nome_banco
+                                        # Primeira vez que vemos este CPF, armazena com seu sistema de origem.
+                                        dados_por_banco[banco_id]['registros'][cpf_banco] = {'nome': nome_banco, 'sistema': sistema_atual}
                 except Exception as e:
                     log_print(f"Erro ao processar '{caminho_arquivo}': {e}")
     
@@ -123,31 +134,47 @@ def passo1_identificar_e_processar_bancos():
         nome_arquivo_saida = f'preparo_lista_banco_{banco_id}.txt'
         with open(nome_arquivo_saida, 'w', encoding='utf-8') as arq_preparo:
             arq_preparo.write("NOME;CPF\n")
-            for cpf, nome in sorted(dados['registros'].items()):
-                arq_preparo.write(f"{nome};{cpf}\n")
+            # O dicionário 'registros' agora guarda outro dicionário {'nome': ..., 'sistema': ...}
+            for cpf, registro in sorted(dados['registros'].items()):
+                # Escrevemos apenas o nome e o CPF, como era o layout original
+                arq_preparo.write(f"{registro['nome']};{cpf}\n")
         
+        # Cálculos consolidados
+        total_lido = sum(dados['arquivos_info'].values())
         total_unicos = len(dados['registros'])
-        total_lido = dados['total_lido']
-        
-        # Corrigido: a contagem de duplicatas eliminadas é a diferença entre o total lido e os registros únicos
         duplicatas_eliminadas = total_lido - total_unicos
 
         log_print(f"Banco {banco_id}:")
-        log_print(f"  - Registros lidos: {total_lido}")
-        log_print(f"  - Registros únicos: {total_unicos}")
-        log_print(f"  - Duplicatas eliminadas: {duplicatas_eliminadas}")
-        log_print(f"  - Arquivo de únicos gerado: {nome_arquivo_saida}")
+        log_print(f"  - Total de arquivos processados: {len(dados['arquivos_info'])}")
+        for arquivo, qtd in sorted(dados['arquivos_info'].items()):
+            # Usar os.path.basename para um nome de arquivo mais limpo
+            log_print(f"    - Arquivo '{os.path.basename(arquivo)}': {qtd} registros lidos")
 
-        # Gera o arquivo de duplicatas se houver alguma
+        log_print(f"  - Resumo Consolidado:")
+        log_print(f"    - Total de registros lidos: {total_lido}")
+        log_print(f"    - Registros únicos: {total_unicos}")
+        log_print(f"    - Duplicatas eliminadas: {duplicatas_eliminadas}")
+        log_print(f"    - Arquivo de únicos gerado: {nome_arquivo_saida}")
+
+        # Gera o arquivo de duplicatas GERAL se houver alguma
         if dados['duplicatas']:
             nome_arquivo_duplicatas = f'DUPLICADOS_BANCO_{banco_id}.txt'
-            # Ordena as duplicatas por CPF para agrupar as ocorrências
             duplicatas_ordenadas = sorted(dados['duplicatas'].items())
             with open(nome_arquivo_duplicatas, 'w', encoding='utf-8') as arq_duplicatas:
                 arq_duplicatas.write("NOME;CPF\n")
                 for cpf, nome in duplicatas_ordenadas:
                     arq_duplicatas.write(f"{nome};{cpf}\n")
-            log_print(f"  - Arquivo de duplicatas gerado: {nome_arquivo_duplicatas} ({len(duplicatas_ordenadas)} CPFs duplicados)")
+            log_print(f"    - Arquivo de duplicatas (GERAL) gerado: {nome_arquivo_duplicatas} ({len(duplicatas_ordenadas)} CPFs duplicados)")
+
+        # Gera o arquivo de duplicatas INTER-SISTEMAS se houver alguma
+        if dados['duplicatas_intersistemas']:
+            nome_arquivo_inter = f'DUPLICADOS_INTERSISTEMAS_BANCO_{banco_id}.txt'
+            intersistemas_ordenados = sorted(dados['duplicatas_intersistemas'].items())
+            with open(nome_arquivo_inter, 'w', encoding='utf-8') as arq_inter:
+                arq_inter.write("NOME;CPF\n")
+                for cpf, nome in intersistemas_ordenados:
+                    arq_inter.write(f"{nome};{cpf}\n")
+            log_print(f"    - Arquivo de duplicatas (INTER-SISTEMAS) gerado: {nome_arquivo_inter} ({len(intersistemas_ordenados)} CPFs)")
 
 
     return sorted(list(bancos_encontrados))
