@@ -22,7 +22,7 @@ def log_print(message=""):
 
 CONFIGURACAO_COLUNAS = {
     "RM": "N", "SUBORDINACAO": "N", "TIPO": "N", "CMDO_MIL_AREA": "N",
-    "CODOM": "N", "SIGLA_OM": "N", "CAT": "N", "PG_PGTO": "N",
+    "CODOM": "N", "SIGLA_OM": "N", "CAT": "N", "PG_PGTO": "S",
     "DESCRICAO_PG": "N", "PREC_CP": "S", "CPF": "S", "BANCO": "S",
     "BANCO_ATUAL": "S", "IDENTIDADE": "N", "NOME": "S", "CALCULO": "S",
     "SITUACAO_COD": "N", "IND": "N", "ALTERACAO_CAD": "N", "DT_LIMITE": "N",
@@ -33,6 +33,7 @@ CONFIGURACAO_COLUNAS = {
 
 CONFIGURACAO_FILTROS = [
     ("PG_PGTO", "!=", "28"),
+    ("SISTEMA", "==", "SIAPPES")
 ]
 
 """Análise de cada linha:
