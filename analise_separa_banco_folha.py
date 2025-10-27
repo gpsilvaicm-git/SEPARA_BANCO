@@ -20,20 +20,20 @@ def log_print(message=""):
 # ÁREA DE CONFIGURAÇÃO DO USUÁRIO
 # =================================================================================
 
+NOME_DA_GUIA_EXCEL = "DETALHAMENTO_COMPARATIVO_MES_AT"
+
 CONFIGURACAO_COLUNAS = {
-    "RM": "N", "SUBORDINACAO": "N", "TIPO": "N", "CMDO_MIL_AREA": "N",
-    "CODOM": "N", "SIGLA_OM": "N", "CAT": "N", "PG_PGTO": "S",
-    "DESCRICAO_PG": "N", "PREC_CP": "S", "CPF": "S", "BANCO": "S",
-    "BANCO_ATUAL": "S", "IDENTIDADE": "N", "NOME": "S", "CALCULO": "S",
-    "SITUACAO_COD": "N", "IND": "N", "ALTERACAO_CAD": "N", "DT_LIMITE": "N",
-    "CLASS_PENSAO": "N", "TIPO_PENSAO": "N", "VALOR_BRUTO": "N",
-    "VALOR_DESCONTOS": "N", "VALOR_LIQUIDO": "N", "DUPLICADO": "N",
-    "DESCRICAO_DUP": "N", "SISTEMA": "S", "CORRIDA": "N", "MES": "N", "ANO": "N"
+    "SISTEMA": "S", "CAT": "N", "CODOM": "N", "SIGLA_OM": "N", "CPF": "S",
+    "PREC_CP": "S", "PG": "S", "DESCRIÇÃO_PG": "N", "NOME": "S", "TIPO_FOLHA": "N",
+    "BANCO_ATUAL": "S", "DESCRIÇÃO_ATUAL": "S", "AGENCIA_ATUAL": "N", "SOMA_VALOR": "N",
+    "SISTEMA_ANTERIOR": "N", "CAT_ANTERIOR": "N", "TIPO_FOLHA_ANTERIOR": "N",
+    "BANCO_ANTERIOR": "N", "DESCRIÇÃO_ANTERIOR": "N", "AGENCIA_ANTERIOR": "N",
+    "INDICATIVO": "N"
 }
 
 CONFIGURACAO_FILTROS = [
-    ("PG_PGTO", "!=", "28"),
-    ("SISTEMA", "==", "SIAPPES")
+    ("PG", "!=", "28"),
+    ("PG", "!=", "14")
 ]
 
 """Análise de cada linha:
@@ -105,7 +105,7 @@ def passo1_identificar_e_processar_bancos():
                             if len(linha_banco_a) > 73 and len(linha_banco_b) > 33:
                                 banco_id = linha_banco_a[:3]
                                 nome_banco = linha_banco_a[43:73].strip()
-                                cpf_banco = linha_banco_b[21:33].strip()
+                                cpf_banco = linha_banco_b[21:33].strip().zfill(11)
                                 
                                 if nome_banco and cpf_banco and banco_id.isdigit():
                                     bancos_encontrados.add(banco_id)
@@ -183,31 +183,16 @@ def passo1_identificar_e_processar_bancos():
 def passo2_preparar_excel_por_banco(df_original, banco_id):
     log_print(f"\n--- Preparando Excel para o Banco {banco_id} ---")
     
-    if 'BANCO' not in df_original.columns:
-        log_print("!! ERRO CRÍTICO: A coluna 'BANCO' não foi encontrada na planilha. !!")
+    if 'BANCO_ATUAL' not in df_original.columns:
+        log_print("!! ERRO CRÍTICO: A coluna 'BANCO_ATUAL' não foi encontrada na planilha. !!")
         return False
         
     df = df_original.copy()
     
-    df['BANCO_PADRONIZADO'] = df['BANCO'].astype(str).str.strip().str.zfill(3)
+    df['BANCO_PADRONIZADO'] = df['BANCO_ATUAL'].astype(str).str.strip().str.zfill(3)
     df_banco = df[df['BANCO_PADRONIZADO'] == banco_id]
     
-    log_print(f"Encontradas {len(df_banco)} linhas no Excel para o banco {banco_id} (antes dos filtros gerais).")
-    
-    for coluna, operador, valor in CONFIGURACAO_FILTROS:
-        if coluna not in df_banco.columns:
-            log_print(f"  - AVISO: A coluna de filtro '{coluna}' não existe. Filtro ignorado.")
-            continue
-        
-        linhas_antes = len(df_banco)
-        df_banco.loc[:, coluna] = df_banco[coluna].astype(str).str.strip()
-        
-        if operador == '==':
-            df_banco = df_banco[df_banco[coluna] == valor]
-        elif operador == '!=':
-            df_banco = df_banco[df_banco[coluna] != valor]
-        
-        log_print(f"  - Filtro '{coluna} {operador} {valor}': {linhas_antes} -> {len(df_banco)} linhas")
+    log_print(f"Encontradas {len(df_banco)} linhas no Excel para o banco {banco_id}.")
 
     colunas_para_manter = [col for col, status in CONFIGURACAO_COLUNAS.items() if status == 'S']
     colunas_existentes = [c for c in colunas_para_manter if c in df_banco.columns]
@@ -215,7 +200,7 @@ def passo2_preparar_excel_por_banco(df_original, banco_id):
     df_final = df_banco[colunas_existentes].copy()
 
     if 'CPF' in df_final.columns:
-        df_final.loc[:, 'CPF'] = df_final['CPF'].astype(str).str.replace(r'[.\-]', '', regex=True).str.strip()
+        df_final.loc[:, 'CPF'] = df_final['CPF'].astype(str).str.replace(r'[.\-]', '', regex=True).str.strip().str.zfill(11)
 
     nome_arquivo_saida = f'preparo_excel_bco_{banco_id}.txt'
     df_final.to_csv(nome_arquivo_saida, sep=';', index=False, header=True)
@@ -223,7 +208,7 @@ def passo2_preparar_excel_por_banco(df_original, banco_id):
     
     return True
 
-def passo3_analisar_cruzamento(banco_id):
+def passo3_analisar_cruzamento(banco_id, cpfs_excluidos):
     
 
     arquivo_banco = f'preparo_lista_banco_{banco_id}.txt'
@@ -236,7 +221,7 @@ def passo3_analisar_cruzamento(banco_id):
                 try:
                     idx_cpf_folha = header_folha.index('CPF')
                     linhas_folha = [line.strip() for line in f if ';' in line.strip()]
-                    cpfs_folha = {line.split(';')[idx_cpf_folha] for line in linhas_folha}
+                    cpfs_folha = {line.split(';')[idx_cpf_folha].strip().zfill(11) for line in linhas_folha}
                 except ValueError:
                     log_print(f"Aviso: Coluna 'CPF' não encontrada no cabeçalho de '{arquivo_folha}'.")
                     cpfs_folha, linhas_folha, header_folha, idx_cpf_folha = set(), [], [], -1
@@ -247,7 +232,7 @@ def passo3_analisar_cruzamento(banco_id):
             header_banco = next(f).strip().split(';')
             idx_cpf_banco = header_banco.index('CPF')
             linhas_banco = [line.strip() for line in f if ';' in line.strip()]
-            cpfs_banco = {line.split(';')[idx_cpf_banco] for line in linhas_banco}
+            cpfs_banco = {line.split(';')[idx_cpf_banco].strip().zfill(11) for line in linhas_banco}
 
     except FileNotFoundError as e:
         log_print(f"Erro: Arquivo de preparo não encontrado: {e.filename}. Pulando análise.")
@@ -256,12 +241,18 @@ def passo3_analisar_cruzamento(banco_id):
         log_print(f"Erro ao ler arquivo de preparo para o banco {banco_id}: {e}.")
         return None
 
-    banco_encontrados_list = [line for line in linhas_banco if line.split(';')[idx_cpf_banco] in cpfs_folha]
-    banco_nao_encontrados_list = [line for line in linhas_banco if line.split(';')[idx_cpf_banco] not in cpfs_folha]
+    banco_encontrados_list = [line for line in linhas_banco if line.split(';')[idx_cpf_banco].strip().zfill(11) in cpfs_folha]
+    
+    banco_nao_encontrados_list = [
+        line for line in linhas_banco if (
+            line.split(';')[idx_cpf_banco].strip().zfill(11) not in cpfs_folha and
+            line.split(';')[idx_cpf_banco].strip().zfill(11) not in cpfs_excluidos
+        )
+    ]
 
     if idx_cpf_folha != -1:
-        folha_encontrados_list = [line for line in linhas_folha if line.split(';')[idx_cpf_folha] in cpfs_banco]
-        folha_nao_encontrados_list = [line for line in linhas_folha if line.split(';')[idx_cpf_folha] not in cpfs_banco]
+        folha_encontrados_list = [line for line in linhas_folha if line.split(';')[idx_cpf_folha].strip().zfill(11) in cpfs_banco]
+        folha_nao_encontrados_list = [line for line in linhas_folha if line.split(';')[idx_cpf_folha].strip().zfill(11) not in cpfs_banco]
     else:
         folha_encontrados_list, folha_nao_encontrados_list = [], []
     
@@ -284,20 +275,64 @@ def passo3_analisar_cruzamento(banco_id):
     stats = {
         "banco_total": len(linhas_banco),
         "banco_encontrados": len(banco_encontrados_list),
+        "banco_nao_encontrados": len(banco_nao_encontrados_list),
         "folha_total": len(linhas_folha),
         "folha_encontrados": len(folha_encontrados_list),
+        "folha_nao_encontrados": len(folha_nao_encontrados_list)
     }
     
     log_print(f"\n--- Análise de Cruzamento - Banco {banco_id} ---")
     log_print(f"  - Total de CPFs no arquivo do Banco: {stats['banco_total']}")
     log_print(f"  - CPFs do Banco ENCONTRADOS na Folha: {stats['banco_encontrados']}")
-    log_print(f"  - CPFs no Banco que não foram encontrados na Folha: {stats['banco_total'] - stats['banco_encontrados']}")
+    log_print(f"  - CPFs no Banco que não foram encontrados na Folha: {stats['banco_nao_encontrados']}")
     log_print(f"  - Total de CPFs no arquivo da Folha: {stats['folha_total']}")
     log_print(f"  - CPFs da Folha ENCONTRADOS no Banco: {stats['folha_encontrados']}")
-    log_print(f"  - CPFs da Folha que não foram encontrados no Banco: {stats['folha_total'] - stats['folha_encontrados']}")
+    log_print(f"  - CPFs da Folha que não foram encontrados no Banco: {stats['folha_nao_encontrados']}")
     log_print(f"  - Arquivos de resultado gerados com sufixo '_{banco_id}.txt'")
 
     return stats
+
+def gerar_relatorios_excluidos(df_original):
+    log_print(f"\n--- Gerando Relatórios de CPFs Excluídos pelos Filtros ---")
+    df = df_original.copy()
+
+    if 'CPF' not in df.columns:
+        log_print("  - AVISO: Coluna 'CPF' não encontrada para gerar relatórios de exclusão.")
+        return df, set()
+
+    cpfs_excluidos_geral = set()
+    indices_para_remover = []
+
+    for coluna, operador, valor in CONFIGURACAO_FILTROS:
+        if coluna not in df.columns:
+            log_print(f"  - AVISO: A coluna de filtro '{coluna}' não existe na planilha. Filtro ignorado.")
+            continue
+        
+        if operador == '!=':
+            df_excluido_neste_filtro = df[df[coluna].astype(str).str.strip() == valor]
+
+            if not df_excluido_neste_filtro.empty:
+                nome_arquivo_saida = f'FILTRO_EXCLUIDO_DA_FOLHA_{coluna}_{valor}.txt'
+                caminho_absoluto = os.path.abspath(nome_arquivo_saida)
+                
+                cpfs_deste_filtro = set(df_excluido_neste_filtro['CPF'].astype(str).str.replace(r'[.\\-]', '', regex=True).str.strip().str.zfill(11))
+                cpfs_excluidos_geral.update(cpfs_deste_filtro)
+
+                df_excluido_neste_filtro.to_csv(
+                    nome_arquivo_saida, sep=';', index=False, header=True
+                )
+                log_print(f"  - Relatório de exclusão gerado: '{nome_arquivo_saida}' com {len(df_excluido_neste_filtro)} CPFs.")
+                log_print(f"  - Arquivo salvo em: {caminho_absoluto}")
+                
+                indices_para_remover.extend(df_excluido_neste_filtro.index)
+
+    df_analise = df.drop(index=list(set(indices_para_remover)))
+    
+    total_excluidos = len(list(set(indices_para_remover)))
+    log_print(f"  - Total de CPFs únicos excluídos por filtros: {len(cpfs_excluidos_geral)}")
+    log_print(f"  - Total de CPFs restantes para análise: {len(df_analise)}")
+
+    return df_analise, cpfs_excluidos_geral
 
 def selecionar_arquivo_excel():
     root = tk.Tk()
@@ -323,27 +358,30 @@ def main():
 
     try:
         log_print("Lendo o arquivo Excel... (isso pode levar alguns segundos)")
-        df_excel_main = pd.read_excel(caminho_excel, dtype=str)
+        log_print(f"Lendo a guia: '{NOME_DA_GUIA_EXCEL}'")
+        df_excel_main = pd.read_excel(caminho_excel, sheet_name=NOME_DA_GUIA_EXCEL, dtype=str)
         log_print(f"Arquivo lido com sucesso. Total de {len(df_excel_main)} linhas encontradas.")
     except Exception as e:
         log_print(f"Ocorreu um erro fatal ao ler o arquivo Excel: {e}")
         return
 
+    df_para_analise, cpfs_excluidos = gerar_relatorios_excluidos(df_excel_main)
+
     totais_gerais = defaultdict(int)
 
     for banco_id in bancos_a_processar:
-        passo2_ok = passo2_preparar_excel_por_banco(df_excel_main, banco_id)
+        passo2_ok = passo2_preparar_excel_por_banco(df_para_analise, banco_id)
         if not passo2_ok:
             continue 
         
-        stats_banco = passo3_analisar_cruzamento(banco_id)
+        stats_banco = passo3_analisar_cruzamento(banco_id, cpfs_excluidos)
         
         if stats_banco:
             for key, value in stats_banco.items():
                 totais_gerais[key] += value
 
-    banco_nao_encontrados_total = totais_gerais['banco_total'] - totais_gerais['banco_encontrados']
-    folha_nao_encontrados_total = totais_gerais['folha_total'] - totais_gerais['folha_encontrados']
+    banco_nao_encontrados_total = totais_gerais['banco_nao_encontrados']
+    folha_nao_encontrados_total = totais_gerais['folha_nao_encontrados']
     
     # Monta o relatório final como uma string
     relatorio_final_str = f"""
