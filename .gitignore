@@ -7,5 +7,6 @@ dist/
 pyvenv.cfg
 *.txt
 /data/
+/TEMP/
 /SIAPPES/
 /SIPPES/

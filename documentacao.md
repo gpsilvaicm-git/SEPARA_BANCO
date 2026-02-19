@@ -1,73 +1,150 @@
-# Documentação dos Scripts de Análise de Folha de Pagamento
+# Documentação Operacional - Separação Banco x Folha
 
-Este documento detalha o funcionamento e o modo de uso dos scripts Python desenvolvidos para analisar, comparar e validar os dados da folha de pagamento contra os arquivos de retorno dos bancos.
-
----
-## 0. Preparo do arquivo excell
-
-Receber da FOPAG (Farias) os arquivos 1->FINAL_SAAFOPAG_FOLHA_PGTO_G3_2025.xlsx e 2->MIGRACAO_ENTRE_BANCOS_G3_2025.xlsx (G3 é exemplo - mescorrida). Abrir os 2 arquivos e na planilha 1 criar as colunas BANCO e BANCO_ATUAL depois da coluna CPF.  Realizar um PROCV : =SEERRO(PROCV($K2;[MIGRACAO_ENTRE_BANCOS_H3_2025.xlsx]DETALHAMENTO_COMPARATIVO_MES_AT!$E$2:$L$418007;7;0);"") na coluna BANCO e BANCO_ATUAL para trazer os dados de banco da planilha 2. Copiar e salvar somente valores destas duas colunas criadas. Pronto, o arquivo está preparado para script abaixo.
-
-## 1. `analise_separa_banco_folha.py`
-
-Este é o script principal do processo. Sua função é ler múltiplos arquivos de banco, consolidar os CPFs, compará-los com uma planilha Excel da folha de pagamento e gerar relatórios detalhados sobre as correspondências e divergências.
-
-### Funcionalidades Principais
-
--   **Leitura Recursiva de Arquivos:** Percorre toda a estrutura de subdiretórios dentro das pastas `SIAPPES/` e `SIPPES/`, permitindo uma organização flexível dos arquivos de entrada (ex: por ano, por mês).
--   **Identificação e Separação por Banco:** Agrupa automaticamente todos os registros pelo código do banco (os 3 primeiros dígitos de cada registro).
--   **Detecção Avançada de Duplicatas:**
-    -   **Geral:** Identifica e reporta CPFs que aparecem mais de uma vez dentro do conjunto de arquivos de um mesmo banco.
-    -   **Inter-sistemas:** Identifica e reporta CPFs que existem simultaneamente nos sistemas `SIAPPES` e `SIPPES` para o mesmo banco, apontando possíveis inconsistências de cadastro.
--   **Seleção Interativa do Arquivo Excel:** Abre uma janela para que o usuário selecione o arquivo da folha de pagamento (`.xlsx` ou `.xls`) a ser usado na comparação.
--   **Filtragem e Seleção Configurável:** Permite que o usuário defina facilmente quais colunas do Excel devem ser salvas e quais filtros devem ser aplicados antes da comparação, através das variáveis `CONFIGURACAO_COLUNAS` e `CONFIGURACAO_FILTROS` no topo do script.
--   **Geração de Relatórios Completos:** Cria um conjunto de arquivos de saída para cada banco, detalhando cada etapa do cruzamento de dados.
-
-### Arquivos Gerados
-
-Para cada banco processado (identificado por `XXX`), o script gera os seguintes arquivos:
-
--   `preparo_lista_banco_XXX.txt`: Contém a lista final de CPFs **únicos** extraídos dos arquivos de texto daquele banco, servindo como base para a comparação.
--   `preparo_excel_bco_XXX.txt`: Contém as linhas da planilha Excel que correspondem àquele banco e que passaram pelos filtros definidos.
--   `DUPLICADOS_BANCO_XXX.txt`: Lista os CPFs que foram encontrados mais de uma vez nos arquivos de origem daquele banco.
--   `DUPLICADOS_INTERSISTEMAS_BANCO_XXX.txt`: Lista os CPFs que foram encontrados tanto em arquivos do sistema `SIAPPES` quanto do `SIPPES`.
--   `BANCO_ENCONTRADOS_NA_FOLHA_XXX.txt`: Registros do banco que **foram encontrados** na folha de pagamento.
--   `BANCO_NAO_ENCONTRADOS_NA_FOLHA_XXX.txt`: Registros do banco que **NÃO foram encontrados** na folha de pagamento.
--   `FOLHA_ENCONTRADOS_NO_BANCO_XXX.txt`: Registros da folha de pagamento que **foram encontrados** nos arquivos do banco.
--   `FOLHA_NAO_ENCONTRADOS_NO_BANCO_XXX.txt`: Registros da folha de pagamento que **NÃO foram encontrados** nos arquivos do banco. Este arquivo é o principal insumo para o script `analisar_nao_encontrados.py`.
--   `RELATÓRIO_GERAL.txt`: Um arquivo de log completo que espelha toda a saída do terminal, registrando cada etapa da execução, os totais e o resumo final consolidado.
-
-### Como Usar
-
-1.  **Organize os Arquivos:** Coloque os arquivos de texto dos bancos dentro das pastas `SIAPPES` ou `SIPPES`. Você pode criar subpastas (ex: `SIAPPES/2025/JUNHO/`) para melhor organização.
-2.  **Configure (Opcional):** Edite as listas `CONFIGURACAO_COLUNAS` e `CONFIGURACAO_FILTROS` no topo do script para ajustar quais dados do Excel serão analisados.
-3.  **Execute o Script:** Abra um terminal na pasta do projeto e execute o comando:
-    ```bash
-    python analise_separa_banco_folha.py
-    ```
-4.  **Selecione o Arquivo Excel:** Uma janela de diálogo aparecerá. Navegue e selecione o arquivo da folha de pagamento.
-5.  **Analise os Resultados:** Após a conclusão, verifique a pasta do projeto para encontrar todos os arquivos de saída e o relatório geral.
+Esta documentação descreve o fluxo atual do projeto, os arquivos de entrada/saída e o mapeamento das posições usadas nos layouts texto (mainframe).
 
 ---
 
-## 2. `analisar_nao_encontrados.py`
+## 1) Visão geral do processo
 
-Este é um script de diagnóstico, projetado para analisar os resultados do `analise_separa_banco_folha.py` e ajudar a entender por que certos registros da folha de pagamento não foram encontrados nos arquivos dos bancos.
+O script principal `analise_separa_banco_folha.py` executa o fluxo abaixo:
 
-### Objetivo
+1. Lê recursivamente arquivos de banco nas pastas `SIAPPES/` e `SIPPES/`.
+2. Monta lista única de CPFs por banco (`preparo_lista_banco_XXX.txt`), com controle de duplicidades.
+3. Lê o Excel da folha (guia `DETALHAMENTO_COMPARATIVO_MES_AT`), aplica filtros configurados e gera `preparo_excel_bco_XXX.txt`.
+4. Cruza banco x folha e gera arquivos de encontrados/não encontrados para cada banco.
+5. Lê `SMOP400-A3-2026.txt`, identifica CPFs com inconsistência bancária (TIPO 2 com conta `2222222222222`) e gera `Inconsistencia_Bancaria_XXX.txt` com base em `FOLHA_NAO_ENCONTRADOS_NO_BANCO_XXX`.
+6. Consolida tudo no `RELATÓRIO_GERAL.txt`.
 
-O script lê todos os arquivos `FOLHA_NAO_ENCONTRADOS_NO_BANCO_*.txt`, consolida os dados e apresenta um resumo estatístico, agrupando os registros por critérios específicos. Isso ajuda a identificar padrões, como por exemplo, se a maioria dos não encontrados pertence a um determinado Posto/Graduação (`PG_PGTO`) ou tipo de cálculo (`CALCULO`).
+---
 
-### Funcionalidades Principais
+## 2) Pré-requisito do Excel de folha
 
--   **Consolidação Automática:** Encontra e processa todos os arquivos de "não encontrados" gerados pelo script principal.
--   **Análise Estatística:** Utiliza a biblioteca `pandas` para contar as ocorrências de cada valor nas colunas `PG_PGTO`, `PREC` (os 2 primeiros dígitos de `PREC_CP`) e `CALCULO`.
--   **Apresentação Clara:** Exibe os resultados em quadros separados e ordenados no terminal, mostrando os itens mais frequentes primeiro.
+Antes de executar o script, a planilha de folha precisa conter os dados de banco atual por CPF (ex.: colunas `BANCO` e `BANCO_ATUAL` preenchidas por PROCV/SEERRO ou método equivalente).
 
-### Como Usar
+Pontos importantes:
+- A guia lida pelo script é fixa: `DETALHAMENTO_COMPARATIVO_MES_AT`.
+- O CPF é normalizado para 11 dígitos (`zfill(11)`), removendo pontuação.
+- Os filtros de exclusão são definidos em `CONFIGURACAO_FILTROS` no topo do script.
 
-1.  **Execute o Script Principal:** Certifique-se de que o `analise_separa_banco_folha.py` já foi executado e que os arquivos `FOLHA_NAO_ENCONTRADOS_NO_BANCO_*.txt` existem na pasta.
-2.  **Execute o Script de Análise:** No terminal, execute o comando:
-    ```bash
-    python analisar_nao_encontrados.py
-    ```
-3.  **Interprete a Saída:** Observe os quadros de resumo no terminal para identificar os principais motivos de divergência entre a folha e os arquivos dos bancos.
+---
+
+## 3) Mapeamento de variáveis e posições (layouts texto)
+
+> Referência de indexação:
+> - Mainframe: intervalos mostrados no padrão humano (1-based, fim exclusivo no documento legado).
+> - Python: `linha[inicio:fim]` em base 0 (fim exclusivo).
+
+### 3.1) Arquivos de banco (`SIAPPES/*`, `SIPPES/*`)
+
+No passo de leitura, o script processa as linhas em pares (`linha_banco_a` e `linha_banco_b`):
+
+- `banco_id`: `linha_banco_a[0:3]`
+- `nome_banco`: `linha_banco_a[43:73].strip()`
+- `cpf_banco`: `linha_banco_b[21:33].strip().zfill(11)`
+
+Esses campos alimentam:
+- `preparo_lista_banco_XXX.txt` (`NOME;CPF`)
+- Detecção de duplicados por banco e entre sistemas.
+
+### 3.2) Arquivo SMOP (`SMOP400-A3-2026.txt`) - foco da inconsistência
+
+Somente linhas de **TIPO 2** são usadas para inconsistência bancária.
+
+Campos usados:
+- `tipo`: Python `linha[0:1]` -> deve ser `'2'`
+- `cpf`: Mainframe `[25:36]` -> Python `linha[24:35]`
+- `conta`: Mainframe `[49:62]` -> Python `linha[48:61]`
+
+Regra aplicada:
+- Se `tipo == '2'` **e** `conta == "2222222222222"`, então o CPF entra no conjunto de inconsistência.
+- CPF é normalizado com `strip().zfill(11)`.
+
+### 3.3) Planilha Excel (folha)
+
+Campos relevantes no fluxo:
+- `CPF`: chave principal de cruzamento.
+- `BANCO_ATUAL`: usado para separar os registros por banco (padronizado para 3 dígitos).
+- Campos adicionais saem conforme `CONFIGURACAO_COLUNAS`.
+
+---
+
+## 4) Regras de negócio atuais
+
+### 4.1) Filtros da folha (antes do cruzamento)
+
+Os filtros atuais excluem registros de:
+- `PG == 28`
+- `PG == 14`
+- `PG == 11`
+
+Os excluídos são registrados em arquivos `FILTRO_EXCLUIDO_DA_FOLHA_*.txt`.
+
+### 4.2) Cruzamento principal
+
+Para cada banco `XXX`:
+- `FOLHA_ENCONTRADOS_NO_BANCO_XXX.txt`: CPF da folha presente na base do banco.
+- `FOLHA_NAO_ENCONTRADOS_NO_BANCO_XXX.txt`: CPF da folha ausente na base do banco.
+
+### 4.3) Inconsistência bancária (nova regra)
+
+Base de comparação da inconsistência:
+- Parte de `FOLHA_NAO_ENCONTRADOS_NO_BANCO_XXX` (lista em memória no fluxo).
+
+Critério:
+- CPF presente no conjunto de CPFs inconsistentes extraído do SMOP TIPO 2 (conta `2222222222222`).
+
+Saída:
+- `Inconsistencia_Bancaria_XXX.txt` (mesmo cabeçalho/formato da folha).
+
+Observação importante:
+- O arquivo `FOLHA_NAO_ENCONTRADOS_NO_BANCO_XXX.txt` permanece completo (sem remoção física de linhas).
+- A subtração é aplicada somente no relatório consolidado.
+
+---
+
+## 5) Arquivos de saída gerados
+
+Para cada banco `XXX`:
+- `preparo_lista_banco_XXX.txt`
+- `preparo_excel_bco_XXX.txt`
+- `DUPLICADOS_BANCO_XXX.txt` (quando houver)
+- `DUPLICADOS_INTERSISTEMAS_BANCO_XXX.txt` (quando houver)
+- `BANCO_ENCONTRADOS_NA_FOLHA_XXX.txt`
+- `BANCO_NAO_ENCONTRADOS_NA_FOLHA_XXX.txt`
+- `FOLHA_ENCONTRADOS_NO_BANCO_XXX.txt`
+- `FOLHA_NAO_ENCONTRADOS_NO_BANCO_XXX.txt`
+- `Inconsistencia_Bancaria_XXX.txt`
+
+Consolidado:
+- `RELATÓRIO_GERAL.txt`
+
+---
+
+## 6) Itens do RELATÓRIO_GERAL
+
+No bloco da FOLHA, o relatório apresenta:
+- `Total ENCONTRADOS nos arquivos de banco`
+- `CPFs da Folha em inconsistencia Bancaria`
+- `Total NÃO ENCONTRADOS nos arquivos de banco` (valor ajustado = bruto - inconsistência)
+- `Total NÃO ENCONTRADOS bruto (antes da subtração)` (valor original para auditoria)
+
+---
+
+## 7) Como executar
+
+1. Organize os arquivos texto dos bancos nas pastas `SIAPPES/` e `SIPPES/`.
+2. Garanta que `SMOP400-A3-2026.txt` esteja na raiz do projeto.
+3. Execute:
+
+```bash
+python analise_separa_banco_folha.py
+```
+
+4. Selecione o arquivo Excel quando a janela abrir.
+5. Ao final, valide os arquivos `Inconsistencia_Bancaria_XXX.txt` e `RELATÓRIO_GERAL.txt`.
+
+---
+
+## 8) Script auxiliar de diagnóstico
+
+O script `analisar_nao_encontrados.py` permanece útil para análise estatística dos arquivos `FOLHA_NAO_ENCONTRADOS_NO_BANCO_*.txt`, ajudando a identificar padrões de divergência.
