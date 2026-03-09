@@ -75,9 +75,16 @@ Campos relevantes no fluxo:
 Os filtros atuais excluem registros de:
 - `PG == 28`
 - `PG == 14`
-- `PG == 11`
+- `PG == 11` com condição adicional `SISTEMA == SIPPES`
 
 Os excluídos são registrados em arquivos `FILTRO_EXCLUIDO_DA_FOLHA_*.txt`.
+
+Regra especial do filtro `PG 11 / SIPPES`:
+- O arquivo `FILTRO_EXCLUIDO_DA_FOLHA_PG_11.txt` considera apenas CPFs que **não** existem em nenhum `preparo_lista_banco_XXX.txt`.
+- Esses CPFs **não** são removidos de `df_analise` e, portanto, não alteram os arquivos:
+  - `FOLHA_ENCONTRADOS_NO_BANCO_XXX.txt`
+  - `FOLHA_NAO_ENCONTRADOS_NO_BANCO_XXX.txt`
+- Objetivo: o filtro vira um relatório de apoio, sem distorcer os resultados oficiais de cruzamento com banco.
 
 ### 4.2) Cruzamento principal
 

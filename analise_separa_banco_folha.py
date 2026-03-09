@@ -36,7 +36,7 @@ CONFIGURACAO_COLUNAS = {
 CONFIGURACAO_FILTROS = [
     ("PG", "!=", "28"),
     ("PG", "!=", "14"),
-    ("PG", "!=", "11")
+    ("PG", "!=", "11", "SISTEMA", "==", "SIPPES")
 ]
 
 """Análise de cada linha:
@@ -215,6 +215,37 @@ def passo1_identificar_e_processar_bancos():
 
     return sorted(list(bancos_encontrados))
 
+def carregar_cpfs_todos_bancos(bancos_a_processar):
+    cpfs_bancos = set()
+
+    for banco_id in bancos_a_processar:
+        arquivo_banco = f'preparo_lista_banco_{banco_id}.txt'
+        if not os.path.exists(arquivo_banco):
+            continue
+
+        try:
+            with open(arquivo_banco, 'r', encoding='utf-8') as f:
+                header = next(f).strip().split(';')
+                if 'CPF' not in header:
+                    continue
+                idx_cpf = header.index('CPF')
+
+                for line in f:
+                    line = line.strip()
+                    if ';' not in line:
+                        continue
+                    partes = line.split(';')
+                    if idx_cpf >= len(partes):
+                        continue
+                    cpf = partes[idx_cpf].strip().zfill(11)
+                    if cpf:
+                        cpfs_bancos.add(cpf)
+        except Exception as e:
+            log_print(f"Aviso: Não foi possível ler '{arquivo_banco}' para mapear CPFs de banco: {e}")
+
+    log_print(f"Total de CPFs únicos mapeados em todos os bancos: {len(cpfs_bancos)}")
+    return cpfs_bancos
+
 def passo2_preparar_excel_por_banco(df_original, banco_id):
     log_print(f"\n--- Preparando Excel para o Banco {banco_id} ---")
     
@@ -278,11 +309,14 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
 
     banco_encontrados_list = [line for line in linhas_banco if line.split(';')[idx_cpf_banco].strip().zfill(11) in cpfs_folha]
     
+    banco_nao_encontrados_bruto_list = [
+        line for line in linhas_banco
+        if line.split(';')[idx_cpf_banco].strip().zfill(11) not in cpfs_folha
+    ]
+
     banco_nao_encontrados_list = [
-        line for line in linhas_banco if (
-            line.split(';')[idx_cpf_banco].strip().zfill(11) not in cpfs_folha and
-            line.split(';')[idx_cpf_banco].strip().zfill(11) not in cpfs_excluidos
-        )
+        line for line in banco_nao_encontrados_bruto_list
+        if line.split(';')[idx_cpf_banco].strip().zfill(11) not in cpfs_excluidos
     ]
 
     if idx_cpf_folha != -1:
@@ -304,6 +338,9 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
     with open(f'BANCO_NAO_ENCONTRADOS_NA_FOLHA_{banco_id}.txt', 'w', encoding='utf-8') as f:
         f.write(header_banco_str)
         f.write('\n'.join(banco_nao_encontrados_list))
+    with open(f'BANCO_NAO_ENCONTRADOS_NA_FOLHA_{banco_id}_BRUTO.txt', 'w', encoding='utf-8') as f:
+        f.write(header_banco_str)
+        f.write('\n'.join(banco_nao_encontrados_bruto_list))
     with open(f'FOLHA_ENCONTRADOS_NO_BANCO_{banco_id}.txt', 'w', encoding='utf-8') as f:
         f.write(header_folha_str)
         f.write('\n'.join(folha_encontrados_list))
@@ -319,6 +356,7 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
     stats = {
         "banco_total": len(linhas_banco),
         "banco_encontrados": len(banco_encontrados_list),
+        "banco_nao_encontrados_bruto": len(banco_nao_encontrados_bruto_list),
         "banco_nao_encontrados": len(banco_nao_encontrados_list),
         "folha_total": len(linhas_folha),
         "folha_encontrados": len(folha_encontrados_list),
@@ -330,6 +368,7 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
     log_print(f"\n--- Análise de Cruzamento - Banco {banco_id} ---")
     log_print(f"  - Total de CPFs no arquivo do Banco: {stats['banco_total']}")
     log_print(f"  - CPFs do Banco ENCONTRADOS na Folha: {stats['banco_encontrados']}")
+    log_print(f"  - CPFs no Banco que não foram encontrados na Folha (BRUTO): {stats['banco_nao_encontrados_bruto']}")
     log_print(f"  - CPFs no Banco que não foram encontrados na Folha: {stats['banco_nao_encontrados']}")
     log_print(f"  - Total de CPFs no arquivo da Folha: {stats['folha_total']}")
     log_print(f"  - CPFs da Folha ENCONTRADOS no Banco: {stats['folha_encontrados']}")
@@ -339,7 +378,7 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
 
     return stats
 
-def gerar_relatorios_excluidos(df_original):
+def gerar_relatorios_excluidos(df_original, cpfs_todos_bancos):
     log_print(f"\n--- Gerando Relatórios de CPFs Excluídos pelos Filtros ---")
     df = df_original.copy()
 
@@ -350,20 +389,60 @@ def gerar_relatorios_excluidos(df_original):
     cpfs_excluidos_geral = set()
     indices_para_remover = []
 
-    for coluna, operador, valor in CONFIGURACAO_FILTROS:
+    for filtro in CONFIGURACAO_FILTROS:
+        if len(filtro) == 3:
+            coluna, operador, valor = filtro
+            coluna_condicional, operador_condicional, valor_condicional = None, None, None
+        elif len(filtro) == 6:
+            coluna, operador, valor, coluna_condicional, operador_condicional, valor_condicional = filtro
+        else:
+            log_print(f"  - AVISO: Filtro inválido '{filtro}'. Filtro ignorado.")
+            continue
+
         if coluna not in df.columns:
             log_print(f"  - AVISO: A coluna de filtro '{coluna}' não existe na planilha. Filtro ignorado.")
             continue
         
         if operador == '!=':
-            df_excluido_neste_filtro = df[df[coluna].astype(str).str.strip() == valor]
+            mascara_principal = df[coluna].astype(str).str.strip() == valor
+            mascara_final = mascara_principal
+
+            if coluna_condicional:
+                if coluna_condicional not in df.columns:
+                    log_print(f"  - AVISO: A coluna condicional '{coluna_condicional}' não existe na planilha. Filtro ignorado.")
+                    continue
+                if operador_condicional == '==':
+                    mascara_condicional = df[coluna_condicional].astype(str).str.strip() == valor_condicional
+                    mascara_final = mascara_principal & mascara_condicional
+                else:
+                    log_print(f"  - AVISO: Operador condicional '{operador_condicional}' não suportado. Filtro ignorado.")
+                    continue
+
+            filtro_pg11_sippes = (
+                coluna == 'PG' and str(valor).strip() == '11' and
+                coluna_condicional == 'SISTEMA' and operador_condicional == '==' and
+                str(valor_condicional).strip().upper() == 'SIPPES'
+            )
+            remover_da_analise = True
+            contabilizar_como_excluido = True
+
+            if filtro_pg11_sippes:
+                cpf_normalizado = df['CPF'].astype(str).str.replace(r'[.\-]', '', regex=True).str.strip().str.zfill(11)
+                mascara_nao_esta_no_banco = ~cpf_normalizado.isin(cpfs_todos_bancos)
+                mascara_final = mascara_final & mascara_nao_esta_no_banco
+                remover_da_analise = False
+                contabilizar_como_excluido = False
+                log_print("  - Regra especial PG 11/SIPPES: relatório considera apenas CPFs que NÃO estão em nenhum arquivo de banco.")
+
+            df_excluido_neste_filtro = df[mascara_final]
 
             if not df_excluido_neste_filtro.empty:
                 nome_arquivo_saida = f'FILTRO_EXCLUIDO_DA_FOLHA_{coluna}_{valor}.txt'
                 caminho_absoluto = os.path.abspath(nome_arquivo_saida)
                 
                 cpfs_deste_filtro = set(df_excluido_neste_filtro['CPF'].astype(str).str.replace(r'[.\\-]', '', regex=True).str.strip().str.zfill(11))
-                cpfs_excluidos_geral.update(cpfs_deste_filtro)
+                if contabilizar_como_excluido:
+                    cpfs_excluidos_geral.update(cpfs_deste_filtro)
 
                 df_excluido_neste_filtro.to_csv(
                     nome_arquivo_saida, sep=';', index=False, header=True
@@ -371,7 +450,8 @@ def gerar_relatorios_excluidos(df_original):
                 log_print(f"  - Relatório de exclusão gerado: '{nome_arquivo_saida}' com {len(df_excluido_neste_filtro)} CPFs.")
                 log_print(f"  - Arquivo salvo em: {caminho_absoluto}")
                 
-                indices_para_remover.extend(df_excluido_neste_filtro.index)
+                if remover_da_analise:
+                    indices_para_remover.extend(df_excluido_neste_filtro.index)
 
     df_analise = df.drop(index=list(set(indices_para_remover)))
     
@@ -412,7 +492,8 @@ def main():
         log_print(f"Ocorreu um erro fatal ao ler o arquivo Excel: {e}")
         return
 
-    df_para_analise, cpfs_excluidos = gerar_relatorios_excluidos(df_excel_main)
+    cpfs_todos_bancos = carregar_cpfs_todos_bancos(bancos_a_processar)
+    df_para_analise, cpfs_excluidos = gerar_relatorios_excluidos(df_excel_main, cpfs_todos_bancos)
     cpfs_inconsistentes_bancarios = carregar_cpfs_inconsistencia_bancaria()
 
     totais_gerais = defaultdict(int)
