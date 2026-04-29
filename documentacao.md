@@ -10,7 +10,7 @@ O script principal `analise_separa_banco_folha.py` executa o fluxo abaixo:
 
 1. Lê recursivamente arquivos de banco nas pastas `SIAPPES/` e `SIPPES/`.
 2. Monta lista única de CPFs por banco (`preparo_lista_banco_XXX.txt`), com controle de duplicidades.
-3. Lê o Excel da folha (guia `DETALHAMENTO_COMPARATIVO_MES_AT`), aplica filtros configurados e gera `preparo_excel_bco_XXX.txt`.
+3. Lê o Excel da folha (guia `DETALHAMENTO_COMPARATIVO_MES_AT` do arquiv `MIGRACAO_ENTRE_BANCOS_C3_2026.xlsx`, onde C é o mês e 3 a corrida), aplica filtros configurados e gera `preparo_excel_bco_XXX.txt`.
 4. Cruza banco x folha e gera arquivos de encontrados/não encontrados para cada banco.
 5. Lê `SMOP400-A3-2026.txt`, identifica CPFs com inconsistência bancária (TIPO 2 com conta `2222222222222`) e gera `Inconsistencia_Bancaria_XXX.txt` com base em `FOLHA_NAO_ENCONTRADOS_NO_BANCO_XXX`.
 6. Consolida tudo no `RELATÓRIO_GERAL.txt`.

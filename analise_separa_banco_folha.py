@@ -16,6 +16,7 @@ def log_print(message=""):
     print(message)
     log_buffer.append(str(message))
 
+
 # =================================================================================
 # ÁREA DE CONFIGURAÇÃO DO USUÁRIO
 # =================================================================================
@@ -23,6 +24,10 @@ def log_print(message=""):
 NOME_DA_GUIA_EXCEL = "DETALHAMENTO_COMPARATIVO_MES_AT"
 ARQUIVO_SMOP = "SMOP400-A3-2026.txt"
 CONTA_INCONSISTENTE = "2222222222222"
+
+# Tipos de arquivo que NÃO entram na base principal de registros únicos/duplicados.
+# CPFs desses tipos são apenas mapeados para excluir do relatório de "não encontrados".
+TIPOS_FORA_DA_BASE_PRINCIPAL = {"EFVAR", "PJNOR", "PJPEC"}
 
 CONFIGURACAO_COLUNAS = {
     "SISTEMA": "S", "CAT": "N", "CODOM": "N", "SIGLA_OM": "N", "CPF": "S",
@@ -72,17 +77,17 @@ Basta editar a lista CONFIGURACAO_FILTROS no topo do script com as regras que vo
 # =================================================================================
 
 def carregar_cpfs_inconsistencia_bancaria():
-    log_print(f"\n--- Carregando CPFs com inconsistência bancária de '{ARQUIVO_SMOP}' ---")
-
-    if not os.path.exists(ARQUIVO_SMOP):
-        log_print(f"  - AVISO: Arquivo '{ARQUIVO_SMOP}' não encontrado. Nenhuma inconsistência será considerada.")
+    caminho_smop = selecionar_arquivo_smop()
+    if not caminho_smop:
+        log_print("  - AVISO: Nenhum arquivo SMOP selecionado. Nenhuma inconsistência será considerada.")
         return set()
+    log_print(f"\n--- Carregando CPFs com inconsistência bancária de '{caminho_smop}' ---")
 
     cpfs_inconsistentes = set()
     total_linhas_tipo2 = 0
 
     try:
-        with open(ARQUIVO_SMOP, 'r', encoding='utf-8', errors='ignore') as arquivo_smop:
+        with open(caminho_smop, 'r', encoding='utf-8', errors='ignore') as arquivo_smop:
             for linha in arquivo_smop:
                 if linha[0:1] != '2':
                     continue
@@ -96,12 +101,24 @@ def carregar_cpfs_inconsistencia_bancaria():
                 if cpf:
                     cpfs_inconsistentes.add(cpf)
     except Exception as e:
-        log_print(f"  - ERRO ao processar o arquivo '{ARQUIVO_SMOP}': {e}")
+        log_print(f"  - ERRO ao processar o arquivo '{caminho_smop}': {e}")
         return set()
 
     log_print(f"  - Total de linhas TIPO 2 lidas: {total_linhas_tipo2}")
     log_print(f"  - Total de CPFs em inconsistência bancária: {len(cpfs_inconsistentes)}")
     return cpfs_inconsistentes
+
+
+def extrair_tipo_arquivo_linha_a(linha_banco_a):
+    """Extrai o tipo do arquivo no segmento A (posição humana 74:78)."""
+    return linha_banco_a[73:78].strip().upper()
+
+
+def extrair_cpf_da_linha(linha, idx_cpf):
+    partes = linha.split(';')
+    if idx_cpf < 0 or idx_cpf >= len(partes):
+        return ""
+    return partes[idx_cpf].strip().zfill(11)
 
 def passo1_identificar_e_processar_bancos():
     log_print(f"\n{'='*50}\nPASSO 1: PROCESSANDO ARQUIVOS DE BANCO\n{'='*50}")
@@ -110,7 +127,10 @@ def passo1_identificar_e_processar_bancos():
         'registros': {}, 
         'duplicatas': {}, 
         'duplicatas_intersistemas': {},
-        'arquivos_info': defaultdict(int)
+        'arquivos_info': defaultdict(int),
+        'arquivos_efvar_info': defaultdict(int),
+        'tipos_registros': defaultdict(int),
+        'cpfs_efvar': set()
     })
     bancos_encontrados = set()
 
@@ -137,13 +157,21 @@ def passo1_identificar_e_processar_bancos():
                             linha_banco_a = linhas_relevantes[i]
                             linha_banco_b = linhas_relevantes[i+1]
 
-                            if len(linha_banco_a) > 73 and len(linha_banco_b) > 33:
+                            if len(linha_banco_a) > 77 and len(linha_banco_b) > 33:
                                 banco_id = linha_banco_a[:3]
                                 nome_banco = linha_banco_a[43:73].strip()
                                 cpf_banco = linha_banco_b[21:33].strip().zfill(11)
+                                tipo_arquivo = extrair_tipo_arquivo_linha_a(linha_banco_a) or "DESCONHECIDO"
                                 
                                 if nome_banco and cpf_banco and banco_id.isdigit():
                                     bancos_encontrados.add(banco_id)
+                                    dados_por_banco[banco_id]['tipos_registros'][tipo_arquivo] += 1
+
+                                    if tipo_arquivo in TIPOS_FORA_DA_BASE_PRINCIPAL:
+                                        dados_por_banco[banco_id]['arquivos_efvar_info'][caminho_arquivo] += 1
+                                        dados_por_banco[banco_id]['cpfs_efvar'].add(cpf_banco)
+                                        continue
+
                                     dados_por_banco[banco_id]['arquivos_info'][caminho_arquivo] += 1
                                     
                                     registro_existente = dados_por_banco[banco_id]['registros'].get(cpf_banco)
@@ -185,6 +213,16 @@ def passo1_identificar_e_processar_bancos():
         for arquivo, qtd in sorted(dados['arquivos_info'].items()):
             # Usar os.path.basename para um nome de arquivo mais limpo
             log_print(f"    - Arquivo '{os.path.basename(arquivo)}': {qtd} registros lidos")
+        if dados['arquivos_efvar_info']:
+            log_print(f"  - Arquivos EFVAR lidos (fora da base principal): {len(dados['arquivos_efvar_info'])}")
+            log_print(f"    - CPFs únicos mapeados em EFVAR: {len(dados['cpfs_efvar'])}")
+            for arquivo, qtd in sorted(dados['arquivos_efvar_info'].items()):
+                log_print(f"    - Arquivo EFVAR '{os.path.basename(arquivo)}': {qtd} registros lidos")
+        if dados['tipos_registros']:
+            resumo_tipos = ", ".join(
+                f"{tipo}: {qtd}" for tipo, qtd in sorted(dados['tipos_registros'].items())
+            )
+            log_print(f"  - Registros por tipo identificados: {resumo_tipos}")
 
         log_print(f"  - Resumo Consolidado:")
         log_print(f"    - Total de registros lidos: {total_lido}")
@@ -213,7 +251,10 @@ def passo1_identificar_e_processar_bancos():
             log_print(f"    - Arquivo de duplicatas (INTER-SISTEMAS) gerado: {nome_arquivo_inter} ({len(intersistemas_ordenados)} CPFs)")
 
 
-    return sorted(list(bancos_encontrados))
+    cpfs_efvar_por_banco = {
+        banco_id: dados['cpfs_efvar'] for banco_id, dados in dados_por_banco.items()
+    }
+    return sorted(list(bancos_encontrados)), cpfs_efvar_por_banco
 
 def carregar_cpfs_todos_bancos(bancos_a_processar):
     cpfs_bancos = set()
@@ -274,7 +315,12 @@ def passo2_preparar_excel_por_banco(df_original, banco_id):
     
     return True
 
-def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_bancarios):
+def passo3_analisar_cruzamento(
+    banco_id,
+    cpfs_excluidos,
+    cpfs_inconsistentes_bancarios,
+    cpfs_efvar_banco
+):
     
 
     arquivo_banco = f'preparo_lista_banco_{banco_id}.txt'
@@ -287,7 +333,7 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
                 try:
                     idx_cpf_folha = header_folha.index('CPF')
                     linhas_folha = [line.strip() for line in f if ';' in line.strip()]
-                    cpfs_folha = {line.split(';')[idx_cpf_folha].strip().zfill(11) for line in linhas_folha}
+                    cpfs_folha = {extrair_cpf_da_linha(line, idx_cpf_folha) for line in linhas_folha}
                 except ValueError:
                     log_print(f"Aviso: Coluna 'CPF' não encontrada no cabeçalho de '{arquivo_folha}'.")
                     cpfs_folha, linhas_folha, header_folha, idx_cpf_folha = set(), [], [], -1
@@ -298,7 +344,7 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
             header_banco = next(f).strip().split(';')
             idx_cpf_banco = header_banco.index('CPF')
             linhas_banco = [line.strip() for line in f if ';' in line.strip()]
-            cpfs_banco = {line.split(';')[idx_cpf_banco].strip().zfill(11) for line in linhas_banco}
+            cpfs_banco = {extrair_cpf_da_linha(line, idx_cpf_banco) for line in linhas_banco}
 
     except FileNotFoundError as e:
         log_print(f"Erro: Arquivo de preparo não encontrado: {e.filename}. Pulando análise.")
@@ -307,27 +353,38 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
         log_print(f"Erro ao ler arquivo de preparo para o banco {banco_id}: {e}.")
         return None
 
-    banco_encontrados_list = [line for line in linhas_banco if line.split(';')[idx_cpf_banco].strip().zfill(11) in cpfs_folha]
+    banco_encontrados_list = [line for line in linhas_banco if extrair_cpf_da_linha(line, idx_cpf_banco) in cpfs_folha]
     
     banco_nao_encontrados_bruto_list = [
         line for line in linhas_banco
-        if line.split(';')[idx_cpf_banco].strip().zfill(11) not in cpfs_folha
+        if extrair_cpf_da_linha(line, idx_cpf_banco) not in cpfs_folha
+    ]
+
+    # CPFs presentes em EFVAR não entram nos "não encontrados" do lado banco.
+    banco_nao_encontrados_bruto_sem_efvar_list = [
+        line for line in banco_nao_encontrados_bruto_list
+        if extrair_cpf_da_linha(line, idx_cpf_banco) not in cpfs_efvar_banco
     ]
 
     banco_nao_encontrados_list = [
-        line for line in banco_nao_encontrados_bruto_list
-        if line.split(';')[idx_cpf_banco].strip().zfill(11) not in cpfs_excluidos
+        line for line in banco_nao_encontrados_bruto_sem_efvar_list
+        if extrair_cpf_da_linha(line, idx_cpf_banco) not in cpfs_excluidos
     ]
 
     if idx_cpf_folha != -1:
-        folha_encontrados_list = [line for line in linhas_folha if line.split(';')[idx_cpf_folha].strip().zfill(11) in cpfs_banco]
-        folha_nao_encontrados_list = [line for line in linhas_folha if line.split(';')[idx_cpf_folha].strip().zfill(11) not in cpfs_banco]
+        folha_encontrados_list = [line for line in linhas_folha if extrair_cpf_da_linha(line, idx_cpf_folha) in cpfs_banco]
+        folha_nao_encontrados_list = [line for line in linhas_folha if extrair_cpf_da_linha(line, idx_cpf_folha) not in cpfs_banco]
         folha_inconsistencia_bancaria_list = [
             line for line in folha_nao_encontrados_list
-            if line.split(';')[idx_cpf_folha].strip().zfill(11) in cpfs_inconsistentes_bancarios
+            if extrair_cpf_da_linha(line, idx_cpf_folha) in cpfs_inconsistentes_bancarios
         ]
     else:
         folha_encontrados_list, folha_nao_encontrados_list, folha_inconsistencia_bancaria_list = [], [], []
+
+    folha_encontrados_efvar_list = [
+        line for line in folha_nao_encontrados_list
+        if extrair_cpf_da_linha(line, idx_cpf_folha) in cpfs_efvar_banco
+    ] if idx_cpf_folha != -1 else []
     
     header_banco_str = ";".join(header_banco) + "\n"
     header_folha_str = ";".join(header_folha) + "\n" if header_folha else ""
@@ -340,7 +397,7 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
         f.write('\n'.join(banco_nao_encontrados_list))
     with open(f'BANCO_NAO_ENCONTRADOS_NA_FOLHA_{banco_id}_BRUTO.txt', 'w', encoding='utf-8') as f:
         f.write(header_banco_str)
-        f.write('\n'.join(banco_nao_encontrados_bruto_list))
+        f.write('\n'.join(banco_nao_encontrados_bruto_sem_efvar_list))
     with open(f'FOLHA_ENCONTRADOS_NO_BANCO_{banco_id}.txt', 'w', encoding='utf-8') as f:
         f.write(header_folha_str)
         f.write('\n'.join(folha_encontrados_list))
@@ -351,18 +408,29 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
         f.write(header_folha_str)
         f.write('\n'.join(folha_inconsistencia_bancaria_list))
 
-    folha_nao_encontrados_ajustado = len(folha_nao_encontrados_list) - len(folha_inconsistencia_bancaria_list)
+    cpfs_inconsistencia = {extrair_cpf_da_linha(line, idx_cpf_folha) for line in folha_inconsistencia_bancaria_list}
+    cpfs_efvar = {extrair_cpf_da_linha(line, idx_cpf_folha) for line in folha_encontrados_efvar_list}
+    cpfs_abatidos = cpfs_inconsistencia.union(cpfs_efvar)
+    folha_nao_encontrados_pos_abatimento_list = [
+        line for line in folha_nao_encontrados_list
+        if extrair_cpf_da_linha(line, idx_cpf_folha) not in cpfs_abatidos
+    ]
+    folha_nao_encontrados_ajustado = len(folha_nao_encontrados_pos_abatimento_list)
 
     stats = {
         "banco_total": len(linhas_banco),
         "banco_encontrados": len(banco_encontrados_list),
-        "banco_nao_encontrados_bruto": len(banco_nao_encontrados_bruto_list),
+        "banco_nao_encontrados_bruto": len(banco_nao_encontrados_bruto_sem_efvar_list),
         "banco_nao_encontrados": len(banco_nao_encontrados_list),
         "folha_total": len(linhas_folha),
         "folha_encontrados": len(folha_encontrados_list),
         "folha_nao_encontrados": len(folha_nao_encontrados_list),
         "folha_inconsistencia_bancaria": len(folha_inconsistencia_bancaria_list),
-        "folha_nao_encontrados_ajustado": folha_nao_encontrados_ajustado
+        "folha_encontrados_efvar": len(folha_encontrados_efvar_list),
+        "folha_nao_encontrados_ajustado": folha_nao_encontrados_ajustado,
+        "header_folha": header_folha,
+        "folha_encontrados_efvar_list": folha_encontrados_efvar_list,
+        "folha_nao_encontrados_pos_abatimento_list": folha_nao_encontrados_pos_abatimento_list
     }
     
     log_print(f"\n--- Análise de Cruzamento - Banco {banco_id} ---")
@@ -373,6 +441,7 @@ def passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_ban
     log_print(f"  - Total de CPFs no arquivo da Folha: {stats['folha_total']}")
     log_print(f"  - CPFs da Folha ENCONTRADOS no Banco: {stats['folha_encontrados']}")
     log_print(f"  - CPFs da Folha em inconsistencia Bancaria: {stats['folha_inconsistencia_bancaria']}")
+    log_print(f"  - CPFs da Folha que estão no banco EFVAR: {stats['folha_encontrados_efvar']}")
     log_print(f"  - CPFs da Folha que não foram encontrados no Banco: {stats['folha_nao_encontrados_ajustado']}")
     log_print(f"  - Arquivos de resultado gerados com sufixo '_{banco_id}.txt'")
 
@@ -461,11 +530,31 @@ def gerar_relatorios_excluidos(df_original, cpfs_todos_bancos):
 
     return df_analise, cpfs_excluidos_geral
 
-def selecionar_arquivo_excel():
+def _abrir_dialogo_selecao_arquivo(titulo, filetypes, initialfile=None):
+    """Abre um filedialog forçando a janela a aparecer SOBRE as demais.
+    Retorna o caminho selecionado ou string vazia se o usuário cancelar.
+    """
     root = tk.Tk()
     root.withdraw()
-    caminho_arquivo = filedialog.askopenfilename(
-        title="Selecione o arquivo Excel da folha de pagamento",
+    root.attributes('-topmost', True)
+    root.lift()
+    root.focus_force()
+    root.update_idletasks()
+
+    kwargs = {"title": titulo, "filetypes": filetypes, "parent": root}
+    if initialfile:
+        kwargs["initialfile"] = initialfile
+
+    try:
+        return filedialog.askopenfilename(**kwargs)
+    finally:
+        root.destroy()
+
+
+def selecionar_arquivo_excel():
+    log_print("\n>> AGUARDANDO: selecione o arquivo Excel da folha de pagamento na janela aberta...")
+    caminho_arquivo = _abrir_dialogo_selecao_arquivo(
+        titulo="Selecione o arquivo Excel da folha de pagamento",
         filetypes=[("Arquivos Excel", "*.xlsx *.xls"), ("Todos os arquivos", "*.*")]
     )
     if not caminho_arquivo:
@@ -474,8 +563,25 @@ def selecionar_arquivo_excel():
     log_print(f"\nArquivo da folha selecionado: {caminho_arquivo}")
     return caminho_arquivo
 
+
+def selecionar_arquivo_smop():
+    log_print("\n>> AGUARDANDO: selecione o arquivo SMOP (inconsistência bancária) na janela aberta...")
+    caminho_arquivo = _abrir_dialogo_selecao_arquivo(
+        titulo="Selecione o arquivo SMOP",
+        filetypes=[("Arquivos texto", "*.txt"), ("Todos os arquivos", "*.*")],
+        initialfile=ARQUIVO_SMOP
+    )
+    if not caminho_arquivo:
+        log_print("Nenhum arquivo SMOP selecionado. O processamento seguirá sem inconsistência bancária.")
+        return None
+    log_print(f"Arquivo SMOP selecionado: {caminho_arquivo}")
+    return caminho_arquivo
+
 def main():
-    bancos_a_processar = passo1_identificar_e_processar_bancos()
+    resultado_passo1 = passo1_identificar_e_processar_bancos()
+    if not resultado_passo1:
+        return
+    bancos_a_processar, cpfs_efvar_por_banco = resultado_passo1
     if not bancos_a_processar:
         return
 
@@ -497,21 +603,51 @@ def main():
     cpfs_inconsistentes_bancarios = carregar_cpfs_inconsistencia_bancaria()
 
     totais_gerais = defaultdict(int)
+    header_folha_geral = []
+    folha_encontrados_efvar_geral = []
+    folha_nao_encontrados_pos_abatimento_geral = []
 
     for banco_id in bancos_a_processar:
         passo2_ok = passo2_preparar_excel_por_banco(df_para_analise, banco_id)
         if not passo2_ok:
             continue 
         
-        stats_banco = passo3_analisar_cruzamento(banco_id, cpfs_excluidos, cpfs_inconsistentes_bancarios)
+        stats_banco = passo3_analisar_cruzamento(
+            banco_id,
+            cpfs_excluidos,
+            cpfs_inconsistentes_bancarios,
+            cpfs_efvar_por_banco.get(banco_id, set())
+        )
         
         if stats_banco:
             for key, value in stats_banco.items():
+                if key in {"header_folha", "folha_encontrados_efvar_list", "folha_nao_encontrados_pos_abatimento_list"}:
+                    continue
                 totais_gerais[key] += value
+
+            if not header_folha_geral and stats_banco.get("header_folha"):
+                header_folha_geral = stats_banco["header_folha"]
+
+            for line in stats_banco.get("folha_encontrados_efvar_list", []):
+                folha_encontrados_efvar_geral.append(f"{banco_id};{line}")
+            for line in stats_banco.get("folha_nao_encontrados_pos_abatimento_list", []):
+                folha_nao_encontrados_pos_abatimento_geral.append(f"{banco_id};{line}")
+
+    if header_folha_geral:
+        header_geral = "BANCO_REFERENCIA;" + ";".join(header_folha_geral) + "\n"
+
+        with open("FOLHA_ENCONTRADOS_NO_BANCO_EFVAR_GERAL.txt", "w", encoding="utf-8") as f:
+            f.write(header_geral)
+            f.write("\n".join(folha_encontrados_efvar_geral))
+
+        with open("FOLHA_NAO_ENCONTRADOS_GERAL_APOS_ABATIMENTOS.txt", "w", encoding="utf-8") as f:
+            f.write(header_geral)
+            f.write("\n".join(folha_nao_encontrados_pos_abatimento_geral))
 
     banco_nao_encontrados_total = totais_gerais['banco_nao_encontrados']
     folha_nao_encontrados_total = totais_gerais['folha_nao_encontrados']
     folha_inconsistencia_bancaria_total = totais_gerais['folha_inconsistencia_bancaria']
+    folha_encontrados_efvar_total = totais_gerais['folha_encontrados_efvar']
     folha_nao_encontrados_ajustado_total = totais_gerais['folha_nao_encontrados_ajustado']
     
     # Monta o relatório final como uma string
@@ -525,6 +661,7 @@ Total de CPFs de TODOS os bancos processados: {totais_gerais['banco_total']}
 Total de CPFs da FOLHA (todos os bancos): {totais_gerais['folha_total']}
   - Total ENCONTRADOS nos arquivos de banco: {totais_gerais['folha_encontrados']}
   - CPFs da Folha em inconsistencia Bancaria: {folha_inconsistencia_bancaria_total}
+  - CPFs da Folha que estão no banco EFVAR: {folha_encontrados_efvar_total}
   - Total NÃO ENCONTRADOS nos arquivos de banco: {folha_nao_encontrados_ajustado_total}
   - Total NÃO ENCONTRADOS bruto (antes da subtração): {folha_nao_encontrados_total}
 Processo concluído."""
