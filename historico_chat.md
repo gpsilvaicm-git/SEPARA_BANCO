@@ -80,3 +80,91 @@ Atendido.
 
 - Este histórico foi salvo para facilitar retomada de contexto sem depender de memória de sessão.
 - Em caso de nova rodada de ajustes, usar este arquivo junto de `documentacao.md` como base oficial.
+
+---
+
+## Sessão 2026-04-30 — Esclarecimento BRUTO vs final + refatoração do passo 3
+
+### 1) Pergunta inicial
+
+Você apontou as duas linhas do `RELATÓRIO_GERAL.txt` para o Banco 001:
+
+- `CPFs no Banco que não foram encontrados na Folha (BRUTO): 251`
+- `CPFs no Banco que não foram encontrados na Folha: 14`
+
+E perguntou qual a diferença entre o **BRUTO** e o valor sem o sufixo.
+
+### 2) Análise feita
+
+Lendo `analise_separa_banco_folha.py` (função `passo3_analisar_cruzamento`) e a
+`documentacao.md`, foi mapeado que existiam três camadas sucessivas no lado BANCO:
+
+| Camada | O que descontava | Variável original |
+|---|---|---|
+| Camada bruta | só "não está na folha" | `banco_nao_encontrados_bruto_list` |
+| **(BRUTO)** | tira EFVAR | `banco_nao_encontrados_bruto_sem_efvar_list` |
+| **(final)** | tira EFVAR + filtros de PG (28/14/11) | `banco_nao_encontrados_list` |
+
+Conclusão repassada a você:
+
+> A diferença de `251 − 14 = 237` CPFs corresponde a CPFs que estão no arquivo do
+> banco e que só não aparecem na folha porque foram propositalmente removidos da
+> análise pelos filtros de PG. Ou seja, **não são "realmente sumidos"** — eles
+> existem na folha original, mas foram excluídos pelos critérios de PG. Os 14
+> restantes são os **verdadeiramente não encontrados**, que merecem investigação.
+
+Foram apontadas três sugestões de melhoria de código (extrair funções puras,
+renomear `bruto_sem_efvar` → `pos_efvar`, separar I/O da regra) e uma sugestão
+de relatório (documentar as três camadas).
+
+### 3) Aprovação e execução
+
+Você aprovou ("vamos fazer as mudanças sujeridas por você") e pediu também que
+o relatório destrinchasse a diferença BRUTO → 237 filtrados → 14 finais.
+
+Plano executado em `analise_separa_banco_folha.py`:
+
+1. Criada `_ler_arquivo_preparo(caminho)` — leitura de CSV de preparo (header,
+   idx_cpf, linhas, set de CPFs). Trata arquivo ausente/vazio/sem coluna `CPF`.
+2. Criada `_calcular_camadas_banco(...)` — função pura que retorna
+   `{bruto_total, pos_efvar, final}` com docstring explicando cada camada.
+3. Criada `_calcular_camadas_folha(...)` — função pura para o lado folha
+   (`encontrados_no_banco`, `nao_encontrados_no_banco`, `inconsistencia_bancaria`,
+   `encontrados_no_efvar`, `nao_encontrados_pos_abatimento`).
+4. Criada `_gravar_resultados_cruzamento(...)` — concentra todo o I/O de
+   gravação. Mantém os mesmos nomes de arquivos legados para preservar
+   compatibilidade com `analisar_nao_encontrados.py`.
+5. Criada `_logar_analise_cruzamento(...)` — emite no log o destrinchamento
+   `BRUTO → filtrados PG → final` por banco.
+6. `passo3_analisar_cruzamento` virou um orquestrador fino (~70 linhas) com
+   docstring explicativo das três camadas.
+7. Relatório consolidado em `main()` passou a mostrar também o destrinchamento
+   somado de todos os bancos:
+   - `Total NÃO ENCONTRADOS na folha (BRUTO, pós-EFVAR)`
+   - `Filtrados pelas regras de PG (28/14/11)`
+   - `Realmente NÃO encontrados na folha (final, pós-filtros PG)`
+
+### 4) Garantias de compatibilidade
+
+- Nomes de arquivos de saída preservados (incl. `BANCO_NAO_ENCONTRADOS_NA_FOLHA_XXX_BRUTO.txt`).
+- Chaves do dicionário `stats` retornado por `passo3_analisar_cruzamento`
+  inalteradas — `main()` continua agregando via `defaultdict` sem mudanças.
+- `analisar_nao_encontrados.py` segue funcionando.
+- Sem erros de lint após o refator.
+
+### 5) Documentação atualizada nesta sessão
+
+- `documentacao.md` ganhou:
+  - Atualização da seção 6 com o destrinchamento do bloco BANCO.
+  - Nova seção §6.1 com a tabela das três camadas (`bruto_total`, `pos_efvar`, `final`).
+  - Nova seção §9 com a arquitetura interna do passo 3 (uma tabela com cada
+    função extraída e sua responsabilidade).
+
+### 6) Próximos passos sugeridos (não executados)
+
+- Quebrar `analise_separa_banco_folha.py` (~776 linhas) em módulos coesos
+  (`io_arquivos.py`, `cruzamento.py`, `bancos.py`, `folha.py`), deixando o arquivo
+  principal só com `main()` e configurações.
+- Centralizar as PGs filtradas (`28`, `14`, `11`) em uma única fonte da verdade,
+  para evitar drift entre `CONFIGURACAO_FILTROS` e o texto literal do log
+  `"Filtrados pelas regras de PG (28/14/11)"`.

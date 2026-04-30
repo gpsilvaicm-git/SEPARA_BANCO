@@ -315,129 +315,153 @@ def passo2_preparar_excel_por_banco(df_original, banco_id):
     
     return True
 
-def passo3_analisar_cruzamento(
-    banco_id,
-    cpfs_excluidos,
-    cpfs_inconsistentes_bancarios,
-    cpfs_efvar_banco
-):
-    
+def _ler_arquivo_preparo(caminho):
+    """Lê um arquivo CSV de preparo (separado por ';') extraindo header, idx do CPF,
+    a lista de linhas (sem header) e o conjunto de CPFs únicos.
 
-    arquivo_banco = f'preparo_lista_banco_{banco_id}.txt'
-    arquivo_folha = f'preparo_excel_bco_{banco_id}.txt'
-    
-    try:
-        if os.path.exists(arquivo_folha) and os.path.getsize(arquivo_folha) > 5:
-            with open(arquivo_folha, 'r', encoding='utf-8') as f:
-                header_folha = next(f).strip().split(';')
-                try:
-                    idx_cpf_folha = header_folha.index('CPF')
-                    linhas_folha = [line.strip() for line in f if ';' in line.strip()]
-                    cpfs_folha = {extrair_cpf_da_linha(line, idx_cpf_folha) for line in linhas_folha}
-                except ValueError:
-                    log_print(f"Aviso: Coluna 'CPF' não encontrada no cabeçalho de '{arquivo_folha}'.")
-                    cpfs_folha, linhas_folha, header_folha, idx_cpf_folha = set(), [], [], -1
-        else:
-             cpfs_folha, linhas_folha, header_folha, idx_cpf_folha = set(), [], [], -1
+    Retorna (cpfs, linhas, header, idx_cpf). Se o arquivo não existir, estiver vazio
+    ou não tiver coluna 'CPF', retorna (set(), [], [], -1).
+    """
+    if not (os.path.exists(caminho) and os.path.getsize(caminho) > 5):
+        return set(), [], [], -1
 
-        with open(arquivo_banco, 'r', encoding='utf-8') as f:
-            header_banco = next(f).strip().split(';')
-            idx_cpf_banco = header_banco.index('CPF')
-            linhas_banco = [line.strip() for line in f if ';' in line.strip()]
-            cpfs_banco = {extrair_cpf_da_linha(line, idx_cpf_banco) for line in linhas_banco}
+    with open(caminho, 'r', encoding='utf-8') as f:
+        header = next(f).strip().split(';')
+        try:
+            idx_cpf = header.index('CPF')
+        except ValueError:
+            log_print(f"Aviso: Coluna 'CPF' não encontrada no cabeçalho de '{caminho}'.")
+            return set(), [], [], -1
+        linhas = [line.strip() for line in f if ';' in line.strip()]
+        cpfs = {extrair_cpf_da_linha(line, idx_cpf) for line in linhas}
+        return cpfs, linhas, header, idx_cpf
 
-    except FileNotFoundError as e:
-        log_print(f"Erro: Arquivo de preparo não encontrado: {e.filename}. Pulando análise.")
-        return None
-    except (ValueError, IndexError) as e:
-        log_print(f"Erro ao ler arquivo de preparo para o banco {banco_id}: {e}.")
-        return None
 
-    banco_encontrados_list = [line for line in linhas_banco if extrair_cpf_da_linha(line, idx_cpf_banco) in cpfs_folha]
-    
-    banco_nao_encontrados_bruto_list = [
+def _calcular_camadas_banco(linhas_banco, idx_cpf, cpfs_folha, cpfs_efvar, cpfs_excluidos_pg):
+    """Calcula as camadas de CPFs do BANCO que NÃO foram encontrados na FOLHA.
+
+    Camada 0 - bruto_total : linhas do banco cujo CPF não consta na folha (sem nenhum filtro).
+    Camada 1 - pos_efvar   : Camada 0 menos os CPFs presentes no EFVAR (tratados à parte).
+                             É a camada exposta no relatório como "(BRUTO)".
+    Camada 2 - final       : Camada 1 menos os CPFs excluídos da folha pelos filtros de PG (28/14/11).
+                             Representa os CPFs "realmente sumidos" da folha.
+
+    A diferença Camada 1 - Camada 2 corresponde aos CPFs que existem na folha original
+    mas foram excluídos da análise pelas regras de PG (não são realmente sumidos,
+    apenas filtrados antes do cruzamento).
+    """
+    bruto_total = [
         line for line in linhas_banco
-        if extrair_cpf_da_linha(line, idx_cpf_banco) not in cpfs_folha
+        if extrair_cpf_da_linha(line, idx_cpf) not in cpfs_folha
+    ]
+    pos_efvar = [
+        line for line in bruto_total
+        if extrair_cpf_da_linha(line, idx_cpf) not in cpfs_efvar
+    ]
+    final = [
+        line for line in pos_efvar
+        if extrair_cpf_da_linha(line, idx_cpf) not in cpfs_excluidos_pg
+    ]
+    return {
+        'bruto_total': bruto_total,
+        'pos_efvar': pos_efvar,
+        'final': final,
+    }
+
+
+def _calcular_camadas_folha(linhas_folha, idx_cpf, cpfs_banco, cpfs_inconsistencia, cpfs_efvar):
+    """Calcula as camadas do lado da FOLHA cruzando com a base do banco.
+
+    Retorna dict com:
+      - encontrados_no_banco
+      - nao_encontrados_no_banco (BRUTO da folha)
+      - inconsistencia_bancaria  (subset dos não encontrados que aparecem no SMOP)
+      - encontrados_no_efvar     (subset dos não encontrados presentes no EFVAR)
+      - nao_encontrados_pos_abatimento (BRUTO menos inconsistência menos EFVAR)
+    """
+    if idx_cpf == -1:
+        chaves = (
+            'encontrados_no_banco', 'nao_encontrados_no_banco',
+            'inconsistencia_bancaria', 'encontrados_no_efvar',
+            'nao_encontrados_pos_abatimento',
+        )
+        return {chave: [] for chave in chaves}
+
+    encontrados = [
+        line for line in linhas_folha
+        if extrair_cpf_da_linha(line, idx_cpf) in cpfs_banco
+    ]
+    nao_encontrados = [
+        line for line in linhas_folha
+        if extrair_cpf_da_linha(line, idx_cpf) not in cpfs_banco
+    ]
+    inconsistencia = [
+        line for line in nao_encontrados
+        if extrair_cpf_da_linha(line, idx_cpf) in cpfs_inconsistencia
+    ]
+    encontrados_efvar = [
+        line for line in nao_encontrados
+        if extrair_cpf_da_linha(line, idx_cpf) in cpfs_efvar
     ]
 
-    # CPFs presentes em EFVAR não entram nos "não encontrados" do lado banco.
-    banco_nao_encontrados_bruto_sem_efvar_list = [
-        line for line in banco_nao_encontrados_bruto_list
-        if extrair_cpf_da_linha(line, idx_cpf_banco) not in cpfs_efvar_banco
+    cpfs_abatidos = (
+        {extrair_cpf_da_linha(line, idx_cpf) for line in inconsistencia}
+        | {extrair_cpf_da_linha(line, idx_cpf) for line in encontrados_efvar}
+    )
+    nao_encontrados_pos_abatimento = [
+        line for line in nao_encontrados
+        if extrair_cpf_da_linha(line, idx_cpf) not in cpfs_abatidos
     ]
 
-    banco_nao_encontrados_list = [
-        line for line in banco_nao_encontrados_bruto_sem_efvar_list
-        if extrair_cpf_da_linha(line, idx_cpf_banco) not in cpfs_excluidos
-    ]
+    return {
+        'encontrados_no_banco': encontrados,
+        'nao_encontrados_no_banco': nao_encontrados,
+        'inconsistencia_bancaria': inconsistencia,
+        'encontrados_no_efvar': encontrados_efvar,
+        'nao_encontrados_pos_abatimento': nao_encontrados_pos_abatimento,
+    }
 
-    if idx_cpf_folha != -1:
-        folha_encontrados_list = [line for line in linhas_folha if extrair_cpf_da_linha(line, idx_cpf_folha) in cpfs_banco]
-        folha_nao_encontrados_list = [line for line in linhas_folha if extrair_cpf_da_linha(line, idx_cpf_folha) not in cpfs_banco]
-        folha_inconsistencia_bancaria_list = [
-            line for line in folha_nao_encontrados_list
-            if extrair_cpf_da_linha(line, idx_cpf_folha) in cpfs_inconsistentes_bancarios
-        ]
-    else:
-        folha_encontrados_list, folha_nao_encontrados_list, folha_inconsistencia_bancaria_list = [], [], []
 
-    folha_encontrados_efvar_list = [
-        line for line in folha_nao_encontrados_list
-        if extrair_cpf_da_linha(line, idx_cpf_folha) in cpfs_efvar_banco
-    ] if idx_cpf_folha != -1 else []
-    
+def _gravar_resultados_cruzamento(banco_id, header_banco, header_folha, camadas_banco, camadas_folha):
+    """Persiste em disco todos os arquivos de saída do cruzamento.
+
+    Mantém os mesmos nomes de arquivo do fluxo legado para preservar compatibilidade
+    com scripts auxiliares (ex.: analisar_nao_encontrados.py).
+    """
     header_banco_str = ";".join(header_banco) + "\n"
     header_folha_str = ";".join(header_folha) + "\n" if header_folha else ""
-    
-    with open(f'BANCO_ENCONTRADOS_NA_FOLHA_{banco_id}.txt', 'w', encoding='utf-8') as f:
-        f.write(header_banco_str)
-        f.write('\n'.join(banco_encontrados_list))
-    with open(f'BANCO_NAO_ENCONTRADOS_NA_FOLHA_{banco_id}.txt', 'w', encoding='utf-8') as f:
-        f.write(header_banco_str)
-        f.write('\n'.join(banco_nao_encontrados_list))
-    with open(f'BANCO_NAO_ENCONTRADOS_NA_FOLHA_{banco_id}_BRUTO.txt', 'w', encoding='utf-8') as f:
-        f.write(header_banco_str)
-        f.write('\n'.join(banco_nao_encontrados_bruto_sem_efvar_list))
-    with open(f'FOLHA_ENCONTRADOS_NO_BANCO_{banco_id}.txt', 'w', encoding='utf-8') as f:
-        f.write(header_folha_str)
-        f.write('\n'.join(folha_encontrados_list))
-    with open(f'FOLHA_NAO_ENCONTRADOS_NO_BANCO_{banco_id}.txt', 'w', encoding='utf-8') as f:
-        f.write(header_folha_str)
-        f.write('\n'.join(folha_nao_encontrados_list))
-    with open(f'Inconsistencia_Bancaria_{banco_id}.txt', 'w', encoding='utf-8') as f:
-        f.write(header_folha_str)
-        f.write('\n'.join(folha_inconsistencia_bancaria_list))
 
-    cpfs_inconsistencia = {extrair_cpf_da_linha(line, idx_cpf_folha) for line in folha_inconsistencia_bancaria_list}
-    cpfs_efvar = {extrair_cpf_da_linha(line, idx_cpf_folha) for line in folha_encontrados_efvar_list}
-    cpfs_abatidos = cpfs_inconsistencia.union(cpfs_efvar)
-    folha_nao_encontrados_pos_abatimento_list = [
-        line for line in folha_nao_encontrados_list
-        if extrair_cpf_da_linha(line, idx_cpf_folha) not in cpfs_abatidos
+    arquivos = [
+        (f'BANCO_ENCONTRADOS_NA_FOLHA_{banco_id}.txt',         header_banco_str, camadas_banco['final_encontrados']),
+        (f'BANCO_NAO_ENCONTRADOS_NA_FOLHA_{banco_id}.txt',     header_banco_str, camadas_banco['final']),
+        (f'BANCO_NAO_ENCONTRADOS_NA_FOLHA_{banco_id}_BRUTO.txt', header_banco_str, camadas_banco['pos_efvar']),
+        (f'FOLHA_ENCONTRADOS_NO_BANCO_{banco_id}.txt',         header_folha_str, camadas_folha['encontrados_no_banco']),
+        (f'FOLHA_NAO_ENCONTRADOS_NO_BANCO_{banco_id}.txt',     header_folha_str, camadas_folha['nao_encontrados_no_banco']),
+        (f'Inconsistencia_Bancaria_{banco_id}.txt',            header_folha_str, camadas_folha['inconsistencia_bancaria']),
     ]
-    folha_nao_encontrados_ajustado = len(folha_nao_encontrados_pos_abatimento_list)
 
-    stats = {
-        "banco_total": len(linhas_banco),
-        "banco_encontrados": len(banco_encontrados_list),
-        "banco_nao_encontrados_bruto": len(banco_nao_encontrados_bruto_sem_efvar_list),
-        "banco_nao_encontrados": len(banco_nao_encontrados_list),
-        "folha_total": len(linhas_folha),
-        "folha_encontrados": len(folha_encontrados_list),
-        "folha_nao_encontrados": len(folha_nao_encontrados_list),
-        "folha_inconsistencia_bancaria": len(folha_inconsistencia_bancaria_list),
-        "folha_encontrados_efvar": len(folha_encontrados_efvar_list),
-        "folha_nao_encontrados_ajustado": folha_nao_encontrados_ajustado,
-        "header_folha": header_folha,
-        "folha_encontrados_efvar_list": folha_encontrados_efvar_list,
-        "folha_nao_encontrados_pos_abatimento_list": folha_nao_encontrados_pos_abatimento_list
-    }
-    
+    for nome, header_str, linhas in arquivos:
+        with open(nome, 'w', encoding='utf-8') as f:
+            f.write(header_str)
+            f.write('\n'.join(linhas))
+
+
+def _logar_analise_cruzamento(banco_id, stats):
+    """Imprime no log a análise de cruzamento por banco, destrinchando as camadas
+    de "não encontrados" para evidenciar a diferença entre o BRUTO e o final.
+    """
+    bruto = stats['banco_nao_encontrados_bruto']
+    final = stats['banco_nao_encontrados']
+    filtrados_pg = bruto - final
+
     log_print(f"\n--- Análise de Cruzamento - Banco {banco_id} ---")
     log_print(f"  - Total de CPFs no arquivo do Banco: {stats['banco_total']}")
     log_print(f"  - CPFs do Banco ENCONTRADOS na Folha: {stats['banco_encontrados']}")
-    log_print(f"  - CPFs no Banco que não foram encontrados na Folha (BRUTO): {stats['banco_nao_encontrados_bruto']}")
-    log_print(f"  - CPFs no Banco que não foram encontrados na Folha: {stats['banco_nao_encontrados']}")
+    log_print(f"  - CPFs no Banco que não foram encontrados na Folha (BRUTO, pós-EFVAR): {bruto}")
+    log_print(f"      > Destrinchando esse total:")
+    log_print(f"        - Filtrados pelas regras de PG (28/14/11): {filtrados_pg}")
+    log_print(f"          (existem na folha original, mas foram excluídos da análise — não são 'sumidos')")
+    log_print(f"        - Realmente NÃO encontrados na Folha (final, pós-filtros PG): {final}")
     log_print(f"  - Total de CPFs no arquivo da Folha: {stats['folha_total']}")
     log_print(f"  - CPFs da Folha ENCONTRADOS no Banco: {stats['folha_encontrados']}")
     log_print(f"  - CPFs da Folha em inconsistencia Bancaria: {stats['folha_inconsistencia_bancaria']}")
@@ -445,6 +469,73 @@ def passo3_analisar_cruzamento(
     log_print(f"  - CPFs da Folha que não foram encontrados no Banco: {stats['folha_nao_encontrados_ajustado']}")
     log_print(f"  - Arquivos de resultado gerados com sufixo '_{banco_id}.txt'")
 
+
+def passo3_analisar_cruzamento(
+    banco_id,
+    cpfs_excluidos,
+    cpfs_inconsistentes_bancarios,
+    cpfs_efvar_banco
+):
+    """Cruza a base do banco com a folha de pagamento e gera relatórios.
+
+    Camadas de "não encontrados" do lado BANCO (vide _calcular_camadas_banco):
+      bruto_total -> pos_efvar -> final.
+    A camada `pos_efvar` é a divulgada como BRUTO no relatório; `final` é o valor
+    "realmente sumido" da folha. A diferença (pos_efvar - final) corresponde aos
+    CPFs filtrados pelas regras de PG (28/14/11), que existem na folha original
+    mas foram excluídos antes do cruzamento.
+    """
+    arquivo_banco = f'preparo_lista_banco_{banco_id}.txt'
+    arquivo_folha = f'preparo_excel_bco_{banco_id}.txt'
+
+    try:
+        cpfs_folha, linhas_folha, header_folha, idx_cpf_folha = _ler_arquivo_preparo(arquivo_folha)
+        cpfs_banco, linhas_banco, header_banco, idx_cpf_banco = _ler_arquivo_preparo(arquivo_banco)
+    except FileNotFoundError as e:
+        log_print(f"Erro: Arquivo de preparo não encontrado: {e.filename}. Pulando análise.")
+        return None
+    except (ValueError, IndexError) as e:
+        log_print(f"Erro ao ler arquivo de preparo para o banco {banco_id}: {e}.")
+        return None
+
+    if idx_cpf_banco == -1:
+        log_print(f"Erro: arquivo de banco '{arquivo_banco}' inválido ou sem CPF. Pulando análise.")
+        return None
+
+    camadas_banco = _calcular_camadas_banco(
+        linhas_banco, idx_cpf_banco, cpfs_folha, cpfs_efvar_banco, cpfs_excluidos
+    )
+    camadas_banco['final_encontrados'] = [
+        line for line in linhas_banco
+        if extrair_cpf_da_linha(line, idx_cpf_banco) in cpfs_folha
+    ]
+
+    camadas_folha = _calcular_camadas_folha(
+        linhas_folha, idx_cpf_folha, cpfs_banco,
+        cpfs_inconsistentes_bancarios, cpfs_efvar_banco,
+    )
+
+    _gravar_resultados_cruzamento(
+        banco_id, header_banco, header_folha, camadas_banco, camadas_folha
+    )
+
+    stats = {
+        "banco_total": len(linhas_banco),
+        "banco_encontrados": len(camadas_banco['final_encontrados']),
+        "banco_nao_encontrados_bruto": len(camadas_banco['pos_efvar']),
+        "banco_nao_encontrados": len(camadas_banco['final']),
+        "folha_total": len(linhas_folha),
+        "folha_encontrados": len(camadas_folha['encontrados_no_banco']),
+        "folha_nao_encontrados": len(camadas_folha['nao_encontrados_no_banco']),
+        "folha_inconsistencia_bancaria": len(camadas_folha['inconsistencia_bancaria']),
+        "folha_encontrados_efvar": len(camadas_folha['encontrados_no_efvar']),
+        "folha_nao_encontrados_ajustado": len(camadas_folha['nao_encontrados_pos_abatimento']),
+        "header_folha": header_folha,
+        "folha_encontrados_efvar_list": camadas_folha['encontrados_no_efvar'],
+        "folha_nao_encontrados_pos_abatimento_list": camadas_folha['nao_encontrados_pos_abatimento'],
+    }
+
+    _logar_analise_cruzamento(banco_id, stats)
     return stats
 
 def gerar_relatorios_excluidos(df_original, cpfs_todos_bancos):
@@ -644,20 +735,25 @@ def main():
             f.write(header_geral)
             f.write("\n".join(folha_nao_encontrados_pos_abatimento_geral))
 
+    banco_nao_encontrados_bruto_total = totais_gerais['banco_nao_encontrados_bruto']
     banco_nao_encontrados_total = totais_gerais['banco_nao_encontrados']
+    banco_filtrados_pg_total = banco_nao_encontrados_bruto_total - banco_nao_encontrados_total
     folha_nao_encontrados_total = totais_gerais['folha_nao_encontrados']
     folha_inconsistencia_bancaria_total = totais_gerais['folha_inconsistencia_bancaria']
     folha_encontrados_efvar_total = totais_gerais['folha_encontrados_efvar']
     folha_nao_encontrados_ajustado_total = totais_gerais['folha_nao_encontrados_ajustado']
-    
-    # Monta o relatório final como uma string
+
     relatorio_final_str = f"""
 {'='*60}
 RELATÓRIO FINAL CONSOLIDADO (TODOS OS BANCOS)
 {'='*60}
 Total de CPFs de TODOS os bancos processados: {totais_gerais['banco_total']}
   - Total ENCONTRADOS na folha: {totais_gerais['banco_encontrados']}
-  - Total NÃO ENCONTRADOS na folha: {banco_nao_encontrados_total}
+  - Total NÃO ENCONTRADOS na folha (BRUTO, pós-EFVAR): {banco_nao_encontrados_bruto_total}
+      > Destrinchando esse total:
+        - Filtrados pelas regras de PG (28/14/11): {banco_filtrados_pg_total}
+          (existem na folha original, mas foram excluídos da análise — não são 'sumidos')
+        - Realmente NÃO encontrados na folha (final, pós-filtros PG): {banco_nao_encontrados_total}
 Total de CPFs da FOLHA (todos os bancos): {totais_gerais['folha_total']}
   - Total ENCONTRADOS nos arquivos de banco: {totais_gerais['folha_encontrados']}
   - CPFs da Folha em inconsistencia Bancaria: {folha_inconsistencia_bancaria_total}

@@ -129,11 +129,37 @@ Consolidado:
 
 ## 6) Itens do RELATÓRIO_GERAL
 
+No bloco do BANCO, o relatório apresenta o destrinchamento das três camadas de
+"não encontrados na folha" (vide §6.1):
+- `Total NÃO ENCONTRADOS na folha (BRUTO, pós-EFVAR)` — soma dos `pos_efvar` de todos os bancos
+  - `Filtrados pelas regras de PG (28/14/11)` — CPFs que existem na folha original mas
+    foram excluídos antes do cruzamento (não são realmente "sumidos")
+  - `Realmente NÃO encontrados na folha (final, pós-filtros PG)` — divergência real
+
 No bloco da FOLHA, o relatório apresenta:
 - `Total ENCONTRADOS nos arquivos de banco`
 - `CPFs da Folha em inconsistencia Bancaria`
-- `Total NÃO ENCONTRADOS nos arquivos de banco` (valor ajustado = bruto - inconsistência)
+- `Total NÃO ENCONTRADOS nos arquivos de banco` (valor ajustado = bruto - inconsistência - EFVAR)
 - `Total NÃO ENCONTRADOS bruto (antes da subtração)` (valor original para auditoria)
+
+### 6.1) Camadas de "não encontrados" do lado BANCO
+
+A função `_calcular_camadas_banco` produz três camadas sucessivas, cada uma um
+subconjunto da anterior:
+
+| Camada | Nome interno | O que é |
+|---|---|---|
+| 0 | `bruto_total` | Linhas do banco cujo CPF não consta na folha (sem nenhum filtro). |
+| 1 | `pos_efvar`   | Camada 0 menos os CPFs presentes em arquivos EFVAR/PJNOR/PJPEC. É a camada divulgada como **"(BRUTO)"** no log e no relatório. |
+| 2 | `final`       | Camada 1 menos os CPFs excluídos da folha pelos filtros de PG (28/14/11). Representa os CPFs **"realmente sumidos"** da folha. |
+
+A diferença `pos_efvar − final` corresponde aos CPFs que existem na folha original
+mas foram excluídos da análise pelas regras de PG. **Não são "sumidos"**, apenas
+filtrados antes do cruzamento — por isso o relatório destrincha esse valor.
+
+Arquivos que materializam cada camada por banco:
+- Camada 1 (`pos_efvar`) → `BANCO_NAO_ENCONTRADOS_NA_FOLHA_XXX_BRUTO.txt`
+- Camada 2 (`final`)     → `BANCO_NAO_ENCONTRADOS_NA_FOLHA_XXX.txt`
 
 ---
 
@@ -155,3 +181,23 @@ python analise_separa_banco_folha.py
 ## 8) Script auxiliar de diagnóstico
 
 O script `analisar_nao_encontrados.py` permanece útil para análise estatística dos arquivos `FOLHA_NAO_ENCONTRADOS_NO_BANCO_*.txt`, ajudando a identificar padrões de divergência.
+
+---
+
+## 9) Arquitetura interna do passo 3 (cruzamento)
+
+A função `passo3_analisar_cruzamento` é um **orquestrador fino** que delega para
+funções menores e testáveis. Essa separação foi feita para deixar a regra de
+negócio independente do I/O e tornar explícitas as três camadas de "não encontrados".
+
+| Função | Responsabilidade |
+|---|---|
+| `_ler_arquivo_preparo(caminho)` | Lê CSV de preparo (`;`) e retorna `(cpfs, linhas, header, idx_cpf)`. Trata arquivo ausente, vazio ou sem coluna `CPF`. |
+| `_calcular_camadas_banco(...)` | Pura. Retorna `{bruto_total, pos_efvar, final}` (vide §6.1). |
+| `_calcular_camadas_folha(...)` | Pura. Retorna `{encontrados_no_banco, nao_encontrados_no_banco, inconsistencia_bancaria, encontrados_no_efvar, nao_encontrados_pos_abatimento}`. |
+| `_gravar_resultados_cruzamento(...)` | Apenas I/O. Persiste todos os `.txt` de saída do banco com os mesmos nomes legados (compatível com `analisar_nao_encontrados.py`). |
+| `_logar_analise_cruzamento(...)` | Apenas log. Imprime a análise por banco com o destrinchamento BRUTO → filtrados PG → final. |
+| `passo3_analisar_cruzamento(...)` | Orquestra: lê arquivos, calcula camadas, grava resultados, monta `stats` e dispara o log. |
+
+Princípio: **regra de negócio em funções puras, I/O e log isolados**. Isso facilita
+testar a regra sem mexer no disco e mantém o orquestrador curto (~70 linhas).
